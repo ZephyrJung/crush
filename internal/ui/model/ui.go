@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -159,9 +160,18 @@ type (
 	creditsUpdatedMsg struct {
 		credits int
 	}
+	// gitInfoUpdatedMsg is sent when git info has been loaded.
+	gitInfoUpdatedMsg struct {
+		info GitInfo
+	}
 )
 
-// UI represents the main user interface model.
+// GitInfo holds git repository information for display in the sidebar.
+type GitInfo struct {
+	Branch   string
+	UserName string
+	Email    string
+}
 type UI struct {
 	com          *common.Common
 	session      *session.Session
@@ -275,6 +285,9 @@ type UI struct {
 
 	// hyperCredits is the remaining Hyper credits, updated after each prompt.
 	hyperCredits *int
+
+	// gitInfoData holds git repository information, updated asynchronously.
+	gitInfoData GitInfo
 
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory struct {
@@ -403,6 +416,7 @@ func (m *UI) Init() tea.Cmd {
 	if m.com.IsHyper() {
 		cmds = append(cmds, m.fetchHyperCredits())
 	}
+	cmds = append(cmds, m.loadGitInfo())
 	return tea.Batch(cmds...)
 }
 
@@ -609,6 +623,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reload prompt history for the new session.
 		m.historyReset()
 		cmds = append(cmds, m.loadPromptHistory())
+		cmds = append(cmds, m.loadGitInfo())
 		m.updateLayoutAndSize()
 
 	case sessionFilesUpdatesMsg:
@@ -936,6 +951,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case creditsUpdatedMsg:
 		m.hyperCredits = &msg.credits
+	case gitInfoUpdatedMsg:
+		m.gitInfoData = msg.info
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
 			slog.Error("Error reported", "error", msg.Msg)
@@ -1686,6 +1703,52 @@ func (m *UI) fetchHyperCredits() tea.Cmd {
 		}
 		return creditsUpdatedMsg{credits: credits}
 	}
+}
+
+// loadGitInfo spawns a goroutine to read git repository information and
+// returns the result as a tea.Msg so the UI can cache it.
+func (m *UI) loadGitInfo() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		gitInfo := m.readGitInfo(ctx)
+		return gitInfoUpdatedMsg{info: gitInfo}
+	}
+}
+
+// readGitInfo runs shell commands to extract git information from the
+// working directory.
+func (m *UI) readGitInfo(ctx context.Context) GitInfo {
+	wd := m.com.Workspace.WorkingDir()
+	if wd == "" {
+		return GitInfo{}
+	}
+
+	info := GitInfo{}
+
+	if branch, err := readGitOutput(ctx, wd, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		info.Branch = branch
+	}
+	if name, err := readGitOutput(ctx, wd, "config", "user.name"); err == nil {
+		info.UserName = name
+	}
+	if email, err := readGitOutput(ctx, wd, "config", "user.email"); err == nil {
+		info.Email = email
+	}
+
+	return info
+}
+
+// readGitOutput runs `git <args>` in the given directory and returns the
+// trimmed stdout, or an error if the command fails.
+func readGitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // handleSelectModel performs the model selection after any provider
