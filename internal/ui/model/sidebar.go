@@ -12,6 +12,35 @@ import (
 	"github.com/charmbracelet/ultraviolet/layout"
 )
 
+// gitInfo renders git repository information for the sidebar.
+func (m *UI) gitInfo(width int) string {
+	t := m.com.Styles
+	git := m.gitInfoData
+	if git.Branch == "" && git.UserName == "" {
+		return ""
+	}
+
+	title := common.Section(t, "Git", width)
+	parts := []string{title}
+
+	if git.Branch != "" {
+		branchLine := fmt.Sprintf("%s %s", t.Git.Icon.Render("⎇"), t.Git.Branch.Render(git.Branch))
+		parts = append(parts, "", branchLine)
+	}
+
+	if git.UserName != "" {
+		userLine := t.Git.User.Render(git.UserName)
+		if git.Email != "" {
+			userLine = fmt.Sprintf("%s  %s", userLine, t.Git.User.Render(fmt.Sprintf("<%s>", git.Email)))
+		}
+		parts = append(parts, userLine)
+	}
+
+	return lipgloss.NewStyle().Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left, parts...),
+	)
+}
+
 // modelInfo renders the current model information including reasoning
 // settings and context usage/cost for the sidebar.
 func (m *UI) modelInfo(width int) string {
@@ -157,14 +186,30 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 		"",
 	}
 
+	gitSection := m.gitInfo(width)
+
 	sidebarHeader := lipgloss.JoinVertical(
 		lipgloss.Left,
 		blocks...,
 	)
+	if gitSection != "" {
+		sidebarHeader = lipgloss.JoinVertical(
+			lipgloss.Left,
+			sidebarHeader,
+			"",
+			gitSection,
+			"",
+		)
+	}
+
+	headerHeight := lipgloss.Height(sidebarHeader)
+	if gitSection != "" {
+		headerHeight += lipgloss.Height(gitSection)
+	}
 
 	var remainingHeightArea image.Rectangle
 	layout.Vertical(
-		layout.Len(lipgloss.Height(sidebarHeader)),
+		layout.Len(headerHeight),
 		layout.Fill(1),
 	).Split(m.layout.sidebar).Assign(new(image.Rectangle), &remainingHeightArea)
 	remainingHeight := remainingHeightArea.Dy() - 6
