@@ -216,6 +216,14 @@ type Styles struct {
 		DefaultDescFg   color.Color    // Default description color when opt is zero
 	}
 
+	// Git info (branch, user name, email)
+	Git struct {
+		Icon        lipgloss.Style
+		Branch      lipgloss.Style
+		User        lipgloss.Style
+		SectionTitle lipgloss.Style
+	}
+
 	// Files
 	Files struct {
 		Path           lipgloss.Style
