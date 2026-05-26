@@ -138,6 +138,14 @@ var (
 // the cached list, or the embedded list if all others fail.
 func Providers(cfg *Config) ([]catwalk.Provider, error) {
 	providerOnce.Do(func() {
+		// If the user already has configured providers in their config,
+		// skip fetching the latest list from the network and use the
+		// embedded providers bundled at release time instead.
+		if cfg.Providers != nil && cfg.Providers.Len() > 0 && !cfg.Options.DisableDefaultProviders {
+			providerList = embedded.GetAll()
+			return
+		}
+
 		var wg sync.WaitGroup
 		var errs []error
 		providers := csync.NewSlice[catwalk.Provider]()

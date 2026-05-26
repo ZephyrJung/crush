@@ -747,6 +747,12 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.LSP.HintDiagnostic = base.Foreground(o.fgSubtle)
 	s.LSP.InfoDiagnostic = base.Foreground(o.info)
 
+	// Git
+	s.Git.Icon = lipgloss.NewStyle().Foreground(o.infoMoreSubtle)
+	s.Git.Branch = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Git.User = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+	s.Git.SectionTitle = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
+
 	// Files
 	s.Files.Path = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Files.Additions = lipgloss.NewStyle().Foreground(o.successMostSubtle)
