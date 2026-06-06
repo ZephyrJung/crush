@@ -35,11 +35,24 @@ func (c *Common) Config() *config.Config {
 // workspace has a large model selected, the theme is chosen based on its
 // provider; otherwise the default theme is used.
 func DefaultCommon(ws workspace.Workspace) *Common {
-	s := styles.ThemeForProvider(largeModelProviderID(ws))
+	s := styles.ThemeForConfig(configuredThemeName(ws), largeModelProviderID(ws))
 	return &Common{
 		Workspace: ws,
 		Styles:    &s,
 	}
+}
+
+// configuredThemeName returns the configured TUI theme, or the empty string if
+// none is set or the workspace is nil.
+func configuredThemeName(ws workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	cfg := ws.Config()
+	if cfg == nil || cfg.Options == nil || cfg.Options.TUI == nil {
+		return ""
+	}
+	return cfg.Options.TUI.Theme
 }
 
 // largeModelProviderID returns the provider ID of the currently selected
