@@ -514,6 +514,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	// Add a command for selecting notification style via picker dialog.
 	notificationLabel := "Notification Style"
 	commands = append(commands, NewCommandItem(c.com.Styles, "select_notifications", notificationLabel, "", ActionOpenDialog{DialogID: NotificationsID}))
+	commands = append(commands, NewCommandItem(c.com.Styles, "select_theme", "Theme", "", ActionOpenDialog{DialogID: ThemesID}).WithAliases("themes"))
 
 	commands = append(
 		commands,

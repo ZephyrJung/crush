@@ -18,6 +18,16 @@ func TestThemeForConfigUsesConfiguredTheme(t *testing.T) {
 	require.NotEqual(t, hex(hyper.Background), hex(configured.Background))
 }
 
+func TestThemeForConfigUsesCrushTheme(t *testing.T) {
+	t.Parallel()
+
+	configured := ThemeForConfig("crush", "hyper")
+	crush := CharmtonePantera()
+
+	require.Equal(t, hex(crush.Background), hex(configured.Background))
+	require.Equal(t, hex(crush.WorkingGradFromColor), hex(configured.WorkingGradFromColor))
+}
+
 func TestThemeForConfigFallsBackToProviderTheme(t *testing.T) {
 	t.Parallel()
 

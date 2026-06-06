@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/ui/common"
+	"github.com/charmbracelet/crush/internal/ui/dialog"
+	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/workspace"
 	"github.com/stretchr/testify/require"
 )
@@ -74,6 +76,44 @@ func TestCurrentModelSupportsImages(t *testing.T) {
 	})
 }
 
+func TestHandleSlashCommandThemesOpensThemesDialog(t *testing.T) {
+	t.Parallel()
+
+	ui := newTestUI()
+	ui.com.Workspace = &testWorkspace{cfg: &config.Config{Options: &config.Options{TUI: &config.TUIOptions{}}}}
+	ui.dialog = dialog.NewOverlay()
+
+	require.True(t, ui.handleSlashCommand("/themes"))
+	require.True(t, ui.dialog.ContainsDialog(dialog.ThemesID))
+}
+
+func TestHandleSelectThemePersistsAndAppliesTheme(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Options: &config.Options{
+			TUI: &config.TUIOptions{},
+		},
+		Models: map[config.SelectedModelType]config.SelectedModel{
+			config.SelectedModelTypeLarge: {Provider: "test-provider", Model: "test-model"},
+		},
+	}
+	ws := &testWorkspace{cfg: cfg}
+	ui := newTestUI()
+	ui.com = &common.Common{
+		Workspace: ws,
+		Styles:    &styles.Styles{},
+	}
+	ui.dialog = dialog.NewOverlay(dialog.NewThemes(ui.com))
+
+	cmd := ui.handleSelectTheme(dialog.ActionSelectTheme{Theme: "zephyr"})
+
+	require.NotNil(t, cmd)
+	require.Equal(t, "zephyr", ws.configFields["options.tui.theme"])
+	require.Equal(t, "zephyr", cfg.Options.TUI.Theme)
+	require.False(t, ui.dialog.ContainsDialog(dialog.ThemesID))
+}
+
 func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 	t.Helper()
 
@@ -87,9 +127,18 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 // testWorkspace is a minimal [workspace.Workspace] stub for unit tests.
 type testWorkspace struct {
 	workspace.Workspace
-	cfg *config.Config
+	cfg          *config.Config
+	configFields map[string]any
 }
 
 func (w *testWorkspace) Config() *config.Config {
 	return w.cfg
+}
+
+func (w *testWorkspace) SetConfigField(scope config.Scope, key string, value any) error {
+	if w.configFields == nil {
+		w.configFields = map[string]any{}
+	}
+	w.configFields[key] = value
+	return nil
 }
