@@ -1447,6 +1447,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			m.notifyBackend = selectNotificationBackend(m.caps, cfg)
 		}
 		m.dialog.CloseDialog(dialog.NotificationsID)
+	case dialog.ActionSelectTheme:
+		cmds = append(cmds, m.handleSelectTheme(msg))
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -2037,6 +2039,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
+				}
+				if m.handleSlashCommand(value) {
+					return nil
 				}
 
 				attachments := m.attachments.List()
@@ -3270,22 +3275,32 @@ func (m *UI) applyTheme(s styles.Styles) {
 // that copies or pre-renders style-dependent values at construction time.
 func (m *UI) refreshStyles() {
 	t := m.com.Styles
-	m.header.refresh()
+	if m.header != nil {
+		m.header.refresh()
+	}
 	if m.layout.sidebar.Dx() > 0 {
 		m.cacheSidebarLogo(m.layout.sidebar.Dx())
 	}
 	m.textarea.SetStyles(t.Editor.Textarea)
-	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
-	m.attachments.Renderer().SetStyles(
-		t.Attachments.Normal,
-		t.Attachments.Deleting,
-		t.Attachments.Image,
-		t.Attachments.Text,
-		t.Attachments.Skill,
-	)
+	if m.completions != nil {
+		m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
+	}
+	if m.attachments != nil {
+		m.attachments.Renderer().SetStyles(
+			t.Attachments.Normal,
+			t.Attachments.Deleting,
+			t.Attachments.Image,
+			t.Attachments.Text,
+			t.Attachments.Skill,
+		)
+	}
 	m.todoSpinner.Style = t.Pills.TodoSpinner
-	m.status.help.Styles = t.Help
-	m.chat.InvalidateRenderCaches()
+	if m.status != nil {
+		m.status.help.Styles = t.Help
+	}
+	if m.chat != nil {
+		m.chat.InvalidateRenderCaches()
+	}
 }
 
 // attachSkill reads a skill's content by ID and returns it as a markdown
@@ -3404,6 +3419,37 @@ func (m *UI) cancelAgent() tea.Cmd {
 	return cancelTimerCmd()
 }
 
+func (m *UI) handleSlashCommand(value string) bool {
+	switch value {
+	case "/themes":
+		m.openThemesDialog()
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *UI) handleSelectTheme(msg dialog.ActionSelectTheme) tea.Cmd {
+	cfg := m.com.Config()
+	if cfg == nil {
+		return util.ReportError(errors.New("configuration not found"))
+	}
+	if cfg.Options == nil {
+		cfg.Options = &config.Options{}
+	}
+	if cfg.Options.TUI == nil {
+		cfg.Options.TUI = &config.TUIOptions{}
+	}
+	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.theme", msg.Theme); err != nil {
+		return util.ReportError(err)
+	}
+	cfg.Options.TUI.Theme = msg.Theme
+	providerID := cfg.Models[config.SelectedModelTypeLarge].Provider
+	m.applyTheme(styles.ThemeForConfig(msg.Theme, providerID))
+	m.dialog.CloseDialog(dialog.ThemesID)
+	return util.CmdHandler(util.NewInfoMsg("Theme set to: " + msg.Theme))
+}
+
 // openDialog opens a dialog by its ID.
 func (m *UI) openDialog(id string) tea.Cmd {
 	var cmds []tea.Cmd
@@ -3426,6 +3472,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		}
 	case dialog.NotificationsID:
 		if cmd := m.openNotificationsDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.ThemesID:
+		if cmd := m.openThemesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case dialog.FilePickerID:
@@ -3526,6 +3576,17 @@ func (m *UI) openNotificationsDialog() tea.Cmd {
 
 	notificationsDialog := dialog.NewNotifications(m.com)
 	m.dialog.OpenDialog(notificationsDialog)
+	return nil
+}
+
+func (m *UI) openThemesDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.ThemesID) {
+		m.dialog.BringToFront(dialog.ThemesID)
+		return nil
+	}
+
+	themesDialog := dialog.NewThemes(m.com)
+	m.dialog.OpenDialog(themesDialog)
 	return nil
 }
 
