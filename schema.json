@@ -719,6 +719,13 @@
           ],
           "description": "Diff mode for the TUI interface"
         },
+        "theme": {
+          "type": "string",
+          "enum": [
+            "zephyr"
+          ],
+          "description": "Theme for the TUI interface"
+        },
         "completions": {
           "$ref": "#/$defs/Completions",
           "description": "Completions UI options"
