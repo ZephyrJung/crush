@@ -138,6 +138,12 @@ type (
 		Attachments []message.Attachment
 	}
 
+	// shellFinishedMsg is sent when shell mode exits.
+	shellFinishedMsg struct {
+		command string
+		err     error
+	}
+
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
 
@@ -285,6 +291,9 @@ type UI struct {
 
 	// hyperCredits is the remaining Hyper credits, updated after each prompt.
 	hyperCredits *int
+
+	// shellMode indicates we are running an interactive shell passthrough.
+	shellMode bool
 
 	// gitInfoData holds git repository information, updated asynchronously.
 	gitInfoData GitInfo
@@ -953,6 +962,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case creditsUpdatedMsg:
 		m.hyperCredits = &msg.credits
+	case shellFinishedMsg:
+		item := chat.NewShellOutputItem(m.com.Styles, msg.command, msg.err)
+		m.chat.AppendMessages(item)
+		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.chat.SelectLast()
 	case gitInfoUpdatedMsg:
 		m.gitInfoData = msg.info
 	case util.InfoMsg:
@@ -1433,6 +1449,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		yolo := !m.com.Workspace.PermissionSkipRequests()
 		m.com.Workspace.PermissionSetSkipRequests(yolo)
 		m.setEditorPrompt(yolo)
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleShellMode:
+		m.toggleShellMode()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionSelectNotificationStyle:
 		cfg := m.com.Config()
@@ -1941,6 +1960,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))
 			return true
+		case key.Matches(msg, m.keyMap.ShellMode):
+			m.toggleShellMode()
+			return true
 		}
 		return false
 	}
@@ -2037,6 +2059,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 
 				value = strings.TrimSpace(value)
+				if m.shellMode {
+					if cmd := m.handleShellModeMessage(value); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					break
+				}
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
 				}
@@ -3016,6 +3044,10 @@ func (m *UI) openEditor(value string) tea.Cmd {
 // setEditorPrompt configures the textarea prompt function based on whether
 // yolo mode is enabled.
 func (m *UI) setEditorPrompt(yolo bool) {
+	if m.shellMode {
+		m.textarea.SetPromptFunc(4, m.shellPromptFunc)
+		return
+	}
 	if yolo {
 		m.textarea.SetPromptFunc(4, m.yoloPromptFunc)
 		return
@@ -3054,6 +3086,21 @@ func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
 		return t.Editor.PromptYoloDotsFocused.Render()
 	}
 	return t.Editor.PromptYoloDotsBlurred.Render()
+}
+
+// shellPromptFunc returns the shell mode prompt (" $ " on first line, ":: " on subsequent).
+func (m *UI) shellPromptFunc(info textarea.PromptInfo) string {
+	t := m.com.Styles
+	if info.LineNumber == 0 {
+		if info.Focused {
+			return t.Editor.PromptYoloIconFocused.Render()
+		}
+		return " $: "
+	}
+	if info.Focused {
+		return t.Editor.PromptNormalFocused.Render()
+	}
+	return t.Editor.PromptNormalBlurred.Render()
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -3423,6 +3470,9 @@ func (m *UI) handleSlashCommand(value string) bool {
 	switch value {
 	case "/themes":
 		m.openThemesDialog()
+		return true
+	case "/shell":
+		m.toggleShellMode()
 		return true
 	default:
 		return false
@@ -4094,4 +4144,42 @@ func renderLogo(t *styles.Styles, compact, hyper bool, width int) string {
 		Width:        width,
 		Hyper:        hyper,
 	})
+}
+
+// toggleShellMode toggles shell mode on/off.
+func (m *UI) toggleShellMode() {
+	m.shellMode = !m.shellMode
+	m.setEditorPrompt(m.com.Workspace.PermissionSkipRequests())
+	if m.shellMode {
+		m.textarea.Placeholder = "shell mode — type commands directly (type 'exit' to return)"
+	} else {
+		m.textarea.Placeholder = m.readyPlaceholder
+	}
+}
+
+// handleShellModeMessage handles a message in shell mode.
+func (m *UI) handleShellModeMessage(value string) tea.Cmd {
+	value = strings.TrimSpace(value)
+
+	// Check for exit command.
+	if value == "exit" {
+		m.shellMode = false
+		m.setEditorPrompt(m.com.Workspace.PermissionSkipRequests())
+		m.textarea.Placeholder = m.readyPlaceholder
+		return nil
+	}
+
+	if value == "" {
+		return nil
+	}
+
+	// Run the command interactively via tea.ExecProcess.
+	// This pauses the TUI, runs the command in the real terminal, and resumes
+	// when the command exits — giving full interactive feedback.
+	return tea.ExecProcess(
+		exec.Command("bash", "-c", value),
+		func(err error) tea.Msg {
+			return shellFinishedMsg{command: value, err: err}
+		},
+	)
 }

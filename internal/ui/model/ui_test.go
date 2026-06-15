@@ -87,6 +87,19 @@ func TestHandleSlashCommandThemesOpensThemesDialog(t *testing.T) {
 	require.True(t, ui.dialog.ContainsDialog(dialog.ThemesID))
 }
 
+func TestHandleSlashCommandShellTogglesShellMode(t *testing.T) {
+	t.Parallel()
+
+	ui := newTestUI()
+	ui.com.Workspace = &testWorkspace{cfg: &config.Config{Options: &config.Options{TUI: &config.TUIOptions{}}}}
+
+	require.False(t, ui.shellMode)
+	require.True(t, ui.handleSlashCommand("/shell"))
+	require.True(t, ui.shellMode)
+	require.True(t, ui.handleSlashCommand("/shell"))
+	require.False(t, ui.shellMode)
+}
+
 func TestHandleSelectThemePersistsAndAppliesTheme(t *testing.T) {
 	t.Parallel()
 
@@ -141,4 +154,8 @@ func (w *testWorkspace) SetConfigField(scope config.Scope, key string, value any
 	}
 	w.configFields[key] = value
 	return nil
+}
+
+func (w *testWorkspace) PermissionSkipRequests() bool {
+	return false
 }

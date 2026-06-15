@@ -65,6 +65,7 @@ type KeyMap struct {
 	Sessions   key.Binding
 	Tab        key.Binding
 	ToggleYolo key.Binding
+	ShellMode  key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -100,6 +101,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleYolo: key.NewBinding(
 			key.WithKeys("ctrl+y"),
 			key.WithHelp("ctrl+y", "toggle yolo"),
+		),
+		ShellMode: key.NewBinding(
+			key.WithKeys("ctrl+shift+t"),
+			key.WithHelp("ctrl+shift+t", "shell mode"),
 		),
 	}
 
