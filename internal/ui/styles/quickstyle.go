@@ -801,7 +801,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Header.Charm = base.Foreground(o.secondary)
 	s.Header.Diagonals = base.Foreground(o.primary)
 	s.Header.Percentage = muted
-	s.Header.HypercreditIcon = base.Foreground(o.secondary)
 	s.Header.Keystroke = muted
 	s.Header.KeystrokeTip = subtle
 	s.Header.WorkingDir = muted
@@ -1065,8 +1064,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.ModelInfo.TokenPercentage = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.ModelInfo.EstimatedUsagePrefix = s.ModelInfo.TokenPercentage
 	s.ModelInfo.Cost = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
-	s.ModelInfo.HypercreditIcon = lipgloss.NewStyle().Foreground(o.secondary)
-	s.ModelInfo.HypercreditText = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 
 	// ResourceGroup
 	s.Resource.DefaultTitleFg = o.fgMoreSubtle
@@ -1128,7 +1125,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Messages.AssistantInfoModel = muted
 	s.Messages.AssistantInfoProvider = subtle
 	s.Messages.AssistantInfoDuration = subtle
-	s.Messages.SubduedHypercreditIcon = subtle
 	s.Messages.AssistantCanceled = lipgloss.NewStyle().Foreground(s.CanceledLabelColor).Italic(true)
 
 	// Plan section styles. The plan card is a bordered box with no background
@@ -1206,13 +1202,9 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Dialog.ImagePreview = lipgloss.NewStyle().Padding(0, 1).Foreground(o.fgMostSubtle)
 
 	// API key input dialog
-	s.Dialog.APIKey.Spinner = base.Foreground(o.success)
 
 	// Auth method choice dialog: the selected card lights up in the success
 	// color while the other stays quiet.
-	s.Dialog.AuthMethod.Prompt = base.Padding(0, 1)
-	s.Dialog.AuthMethod.CardBlurred = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.separator).Foreground(o.fgMostSubtle)
-	s.Dialog.AuthMethod.CardFocused = base.Border(lipgloss.RoundedBorder()).BorderForeground(o.success).Foreground(o.success)
 
 	// OAuth dialog
 	s.Dialog.OAuth.Spinner = base.Foreground(o.successMoreSubtle)

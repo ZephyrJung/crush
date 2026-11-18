@@ -79,60 +79,6 @@ func (c *controllerV1) handlePostWorkspaceConfigCompact(w http.ResponseWriter, r
 	w.WriteHeader(http.StatusOK)
 }
 
-// handlePostWorkspaceConfigProviderKey sets a provider API key.
-func (c *controllerV1) handlePostWorkspaceConfigProviderKey(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-
-	var req proto.ConfigProviderKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.server.logError(r, "Failed to decode request", "error", err)
-		jsonError(w, http.StatusBadRequest, "failed to decode request")
-		return
-	}
-
-	apiKey, err := req.DecodeAPIKey()
-	if err != nil {
-		c.server.logError(r, "Failed to decode api key", "error", err, "kind", req.Kind)
-		jsonError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := c.backend.SetProviderAPIKey(id, req.Scope, req.ProviderID, apiKey); err != nil {
-		c.handleError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-// handlePostWorkspaceConfigImportCopilot imports Copilot credentials.
-func (c *controllerV1) handlePostWorkspaceConfigImportCopilot(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	token, ok, err := c.backend.ImportCopilot(id)
-	if err != nil {
-		c.handleError(w, r, err)
-		return
-	}
-	jsonEncode(w, proto.ImportCopilotResponse{Token: token, Success: ok})
-}
-
-// handlePostWorkspaceConfigRefreshOAuth refreshes an OAuth token for a provider.
-func (c *controllerV1) handlePostWorkspaceConfigRefreshOAuth(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-
-	var req proto.ConfigRefreshOAuthRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.server.logError(r, "Failed to decode request", "error", err)
-		jsonError(w, http.StatusBadRequest, "failed to decode request")
-		return
-	}
-
-	if err := c.backend.RefreshOAuthToken(r.Context(), id, req.Scope, req.ProviderID); err != nil {
-		c.handleError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
 // handleGetWorkspaceProjectNeedsInit reports whether a project needs initialization.
 func (c *controllerV1) handleGetWorkspaceProjectNeedsInit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

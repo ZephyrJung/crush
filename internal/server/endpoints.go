@@ -552,30 +552,6 @@ func (c *controllerV1) endpoints() []apigen.Endpoint {
 			Fails(400, 404, 500).
 			Handle(c.handlePostWorkspaceConfigCompact),
 
-		apigen.Post("/v1/workspaces/{id}/config/provider-key").
-			Summary("Set provider API key").
-			Tags("config").
-			PathParam("id", "Workspace ID").
-			Accepts(proto.ConfigProviderKeyRequest{}).
-			Fails(400, 404, 500).
-			Handle(c.handlePostWorkspaceConfigProviderKey),
-
-		apigen.Post("/v1/workspaces/{id}/config/import-copilot").
-			Summary("Import Copilot credentials").
-			Tags("config").
-			PathParam("id", "Workspace ID").
-			Responds(proto.ImportCopilotResponse{}).
-			Fails(404, 500).
-			Handle(c.handlePostWorkspaceConfigImportCopilot),
-
-		apigen.Post("/v1/workspaces/{id}/config/refresh-oauth").
-			Summary("Refresh OAuth token").
-			Tags("config").
-			PathParam("id", "Workspace ID").
-			Accepts(proto.ConfigRefreshOAuthRequest{}).
-			Fails(400, 404, 500).
-			Handle(c.handlePostWorkspaceConfigRefreshOAuth),
-
 		apigen.Get("/v1/workspaces/{id}/project/needs-init").
 			Summary("Check if project needs initialization").
 			Tags("project").

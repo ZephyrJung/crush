@@ -504,27 +504,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "OAuthClient": {
-      "properties": {
-        "client_id": {
-          "type": "string"
-        },
-        "client_secret": {
-          "type": "string"
-        },
-        "auth_url": {
-          "type": "string"
-        },
-        "token_url": {
-          "type": "string"
-        },
-        "auth_style": {
-          "type": "integer"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "Options": {
       "properties": {
         "context_paths": {
@@ -597,16 +576,6 @@
           },
           "type": "array",
           "description": "List of built-in tools to disable and hide from the agent"
-        },
-        "disable_provider_auto_update": {
-          "type": "boolean",
-          "description": "Disable providers auto-update",
-          "default": false
-        },
-        "disable_default_providers": {
-          "type": "boolean",
-          "description": "Ignore all default/embedded providers. When enabled, providers must be fully specified in the config file with base_url, models, and api_key - no merging with defaults occurs",
-          "default": false
         },
         "attribution": {
           "$ref": "#/$defs/Attribution",
@@ -794,17 +763,6 @@
         },
         "type": {
           "type": "string",
-          "enum": [
-            "completions",
-            "responses",
-            "messages",
-            "hyper",
-            "litellm",
-            "llamacpp",
-            "lmstudio",
-            "ollama",
-            "omlx"
-          ],
           "description": "Provider type that determines the API format",
           "default": "openai"
         },
@@ -814,10 +772,6 @@
           "examples": [
             "$OPENAI_API_KEY"
           ]
-        },
-        "oauth": {
-          "$ref": "#/$defs/Token",
-          "description": "OAuth2 token for authentication with the provider"
         },
         "disable": {
           "type": "boolean",
@@ -843,18 +797,9 @@
           "type": "object",
           "description": "Additional provider-specific options for this provider"
         },
-        "aws_auth_refresh": {
-          "type": "string",
-          "description": "Shell command to run when AWS credentials expire (Bedrock only)."
-        },
         "flat_rate": {
           "type": "boolean",
           "description": "Flat-rate mode for this provider"
-        },
-        "discover_models": {
-          "type": "boolean",
-          "description": "Auto-discover models from /v1/models endpoint. When true with existing models they are merged (yours win)",
-          "default": true
         },
         "models": {
           "items": {
@@ -1034,38 +979,6 @@
       },
       "additionalProperties": false,
       "type": "object"
-    },
-    "Token": {
-      "properties": {
-        "access_token": {
-          "type": "string"
-        },
-        "refresh_token": {
-          "type": "string"
-        },
-        "id_token": {
-          "type": "string"
-        },
-        "account_id": {
-          "type": "string"
-        },
-        "expires_in": {
-          "type": "integer"
-        },
-        "expires_at": {
-          "type": "integer"
-        },
-        "client": {
-          "$ref": "#/$defs/OAuthClient"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "access_token",
-        "expires_in",
-        "expires_at"
-      ]
     },
     "ToolGlob": {
       "properties": {

@@ -17,12 +17,7 @@ import (
 // expensive style rebuild. This is the single source of truth for the
 // provider-to-theme mapping; [ThemeForProvider] builds on it.
 func ThemeKeyForProvider(providerID string) string {
-	switch providerID {
-	case "hyper":
-		return "hyper"
-	default:
-		return "default"
-	}
+	return "default"
 }
 
 // ThemeForProvider returns the Styles associated with the given provider
@@ -36,12 +31,7 @@ func ThemeForProvider(providerID string) Styles {
 // [ThemeKeyForProvider]. Unknown keys yield the default Charmtone Pantera
 // theme.
 func ThemeForKey(key string) Styles {
-	switch key {
-	case "hyper":
-		return HypercrushObsidiana()
-	default:
-		return CharmtonePantera()
-	}
+	return CharmtonePantera()
 }
 
 // CharmtonePantera returns the Charmtone dark theme. It's the default style
@@ -161,17 +151,7 @@ func charmtoneOverrides(s Styles) Styles {
 	s.Markdown.Link.Color = hex(tone.Zinc)
 	s.Markdown.Image.Color = hex(tone.Cheeky)
 
-	// The ◆ hypercredit symbol inside subdued text (e.g. savings
-	// suffixes) uses Mochi so it stays visible against its surroundings.
-	s.Messages.SubduedHypercreditIcon = s.Messages.SubduedHypercreditIcon.
-		Foreground(tone.Violet)
-
 	return s
-}
-
-// HypercrushObsidiana returns the Hypercrush dark theme.
-func HypercrushObsidiana() Styles {
-	return CharmtonePantera()
 }
 
 // gruvboxDarkOpts returns the quickStyleOpts for the Gruvbox Dark theme,

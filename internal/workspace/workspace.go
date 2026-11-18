@@ -17,7 +17,6 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/question"
@@ -249,12 +248,9 @@ type Workspace interface {
 	// Config mutations (proxied to server in client mode)
 	UpdatePreferredModel(scope config.Scope, modelType config.SelectedModelType, model config.SelectedModel) error
 	SetCompactMode(scope config.Scope, enabled bool) error
-	SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error
 	SetConfigField(scope config.Scope, key string, value any) error
 	SetConfigFields(scope config.Scope, fields map[string]any) error
 	RemoveConfigField(scope config.Scope, key string) error
-	ImportCopilot() (*oauth.Token, bool)
-	RefreshOAuthToken(ctx context.Context, scope config.Scope, providerID string) error
 
 	// Project lifecycle
 	ProjectNeedsInitialization() (bool, error)

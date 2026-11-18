@@ -17,7 +17,6 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pinentry"
 	"github.com/charmbracelet/crush/internal/proto"
@@ -406,14 +405,6 @@ func (w *AppWorkspace) SetCompactMode(scope config.Scope, enabled bool) error {
 	return w.store.SetCompactMode(scope, enabled)
 }
 
-func (w *AppWorkspace) SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error {
-	if err := w.store.SetProviderAPIKey(scope, providerID, apiKey); err != nil {
-		return err
-	}
-	w.store.SignalAuthComplete(providerID)
-	return nil
-}
-
 func (w *AppWorkspace) SetConfigField(scope config.Scope, key string, value any) error {
 	return w.store.SetConfigField(scope, key, value)
 }
@@ -425,16 +416,6 @@ func (w *AppWorkspace) SetConfigFields(scope config.Scope, fields map[string]any
 func (w *AppWorkspace) RemoveConfigField(scope config.Scope, key string) error {
 	return w.store.RemoveConfigField(scope, key)
 }
-
-func (w *AppWorkspace) ImportCopilot() (*oauth.Token, bool) {
-	return w.store.ImportCopilot()
-}
-
-func (w *AppWorkspace) RefreshOAuthToken(ctx context.Context, scope config.Scope, providerID string) error {
-	return w.store.RefreshOAuthToken(ctx, scope, providerID)
-}
-
-// -- Project lifecycle --
 
 func (w *AppWorkspace) ProjectNeedsInitialization() (bool, error) {
 	return config.ProjectNeedsInitialization(w.store)

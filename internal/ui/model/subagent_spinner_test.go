@@ -15,7 +15,7 @@ func TestAnimClockRunsForSubagentsOutsideTheList(t *testing.T) {
 	t.Parallel()
 
 	newUI := func() *UI {
-		return &UI{chat: NewChat(common.DefaultCommon(&prismWorkspace{}), config.ScrollbarDefault)}
+		return &UI{chat: NewChat(common.DefaultCommon(&stubWorkspace{}), config.ScrollbarDefault)}
 	}
 
 	t.Run("nothing visible and no subagents stays stopped", func(t *testing.T) {

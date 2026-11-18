@@ -9,11 +9,8 @@ import (
 
 	"charm.land/catwalk/v3/pkg/catwalk"
 	"charm.land/fantasy"
-	"charm.land/fantasy/providers/anthropic"
-	"charm.land/fantasy/providers/bedrock"
 	"charm.land/fantasy/providers/openaicompat"
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/discover"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -518,42 +515,29 @@ func TestUpdateParentSessionCost(t *testing.T) {
 }
 
 func TestGetProviderOptionsReasoningEffort(t *testing.T) {
-	// Bedrock is Fantasy's Anthropic under a different provider name; options
-	// must land under anthropic.Name so the Anthropic language model picks them up.
-	tests := []struct {
-		name         string
-		providerType catwalk.Type
-	}{
-		{"anthropic honors reasoning_effort", catwalk.Type(anthropic.Name)},
-		{"bedrock honors reasoning_effort", catwalk.Type(bedrock.Name)},
+	model := Model{
+		CatwalkCfg: catwalk.Model{
+			ID: "qwen3.8:27b-mlx",
+			Reasoning: catwalk.Reasoning{
+				Thinking:     catwalk.ThinkingToggleable,
+				EffortLevels: catwalk.NewEffortLevels("low", "medium", "high"),
+			},
+		},
+		ModelCfg: config.SelectedModel{
+			Provider:        config.OllamaProviderID,
+			ReasoningEffort: "high",
+		},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			model := Model{
-				CatwalkCfg: catwalk.Model{
-					ID: "claude-opus-4-7",
-					Reasoning: catwalk.Reasoning{
-						Thinking:     catwalk.ThinkingToggleable,
-						EffortLevels: catwalk.NewEffortLevels("max"),
-					},
-				},
-				ModelCfg: config.SelectedModel{
-					Provider:        "test",
-					ReasoningEffort: "max",
-				},
-			}
-			providerCfg := config.ProviderConfig{ID: "test", Type: tc.providerType}
+	providerCfg := config.ProviderConfig{ID: config.OllamaProviderID, Type: config.OllamaProviderID}
 
-			opts := getProviderOptions(model, providerCfg)
+	opts := getProviderOptions(model, providerCfg)
 
-			raw, ok := opts[anthropic.Name]
-			require.True(t, ok, "options should be keyed under anthropic.Name for type %q", tc.providerType)
-			parsed, ok := raw.(*anthropic.ProviderOptions)
-			require.True(t, ok)
-			require.NotNil(t, parsed.Effort)
-			assert.Equal(t, anthropic.Effort("max"), *parsed.Effort)
-		})
-	}
+	raw, ok := opts[openaicompat.Name]
+	require.True(t, ok, "options should be keyed under openaicompat.Name")
+	parsed, ok := raw.(*openaicompat.ProviderOptions)
+	require.True(t, ok)
+	require.NotNil(t, parsed.ReasoningEffort)
+	assert.Equal(t, "high", string(*parsed.ReasoningEffort))
 }
 
 func TestIsUnauthorized(t *testing.T) {
@@ -582,76 +566,35 @@ func TestIsUnauthorized(t *testing.T) {
 	})
 }
 
-func TestGetProviderOptionsReasoningEffortCustomProvider(t *testing.T) {
-	// Custom local providers (lmstudio, ollama, omlx, litellm, llamacpp)
-	// go through the OpenAI-compat client and must receive the selected
-	// reasoning effort like any other OpenAI-compatible provider.
-	for _, providerType := range discover.RegisteredProviderTypes() {
-		t.Run(providerType, func(t *testing.T) {
-			model := Model{
-				CatwalkCfg: catwalk.Model{
-					ID: "qwen/qwen3-8b",
-					Reasoning: catwalk.Reasoning{
-						Thinking:     catwalk.ThinkingToggleable,
-						EffortLevels: catwalk.NewEffortLevels("low", "medium", "high"),
-					},
-				},
-				ModelCfg: config.SelectedModel{
-					Provider:        "local",
-					Model:           "qwen/qwen3-8b",
-					ReasoningEffort: "high",
-				},
-			}
-			providerCfg := config.ProviderConfig{ID: "local", Type: catwalk.Type(providerType)}
-
-			opts := getProviderOptions(model, providerCfg)
-
-			raw, ok := opts[openaicompat.Name]
-			require.True(t, ok, "options should be keyed under openaicompat.Name for type %q", providerType)
-			parsed, ok := raw.(*openaicompat.ProviderOptions)
-			require.True(t, ok)
-			require.NotNil(t, parsed.ReasoningEffort)
-			assert.Equal(t, "high", string(*parsed.ReasoningEffort))
-		})
-	}
-}
-
-func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
+func TestGetProviderOptionsReasoningEffortForOllama(t *testing.T) {
 	model := Model{
 		CatwalkCfg: catwalk.Model{
-			ID: "glm-5.2",
+			ID: "qwen3.6:35b-mlx",
 			Reasoning: catwalk.Reasoning{
 				Thinking:     catwalk.ThinkingToggleable,
-				EffortLevels: catwalk.NewEffortLevels("high", "max"),
+				EffortLevels: catwalk.NewEffortLevels("low", "medium", "high"),
 			},
 		},
 		ModelCfg: config.SelectedModel{
-			Provider: "zai",
+			Provider:        config.OllamaProviderID,
+			Model:           "qwen3.6:35b-mlx",
+			ReasoningEffort: "high",
 		},
 	}
-	providerCfg := config.ProviderConfig{
-		ID:   string(catwalk.InferenceProviderZAI),
-		Type: openaicompat.Name,
-	}
+	providerCfg := config.ProviderConfig{ID: config.OllamaProviderID, Type: config.OllamaProviderID}
 
 	opts := getProviderOptions(model, providerCfg)
 
 	raw, ok := opts[openaicompat.Name]
-	require.True(t, ok)
+	require.True(t, ok, "options should be keyed under openaicompat.Name")
 	parsed, ok := raw.(*openaicompat.ProviderOptions)
 	require.True(t, ok)
 	require.NotNil(t, parsed.ReasoningEffort)
 	assert.Equal(t, "high", string(*parsed.ReasoningEffort))
-
-	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "enabled", thinking["type"])
 }
 
 func TestGetProviderOptionsTopKExtraBody(t *testing.T) {
-	// "ollama" has a registered discover.Enricher, so it is treated as a
-	// known custom provider speaking openai-compat.
-	knownCustomProviderCfg := config.ProviderConfig{ID: "ollama", Type: "ollama"}
+	knownCustomProviderCfg := config.ProviderConfig{ID: config.OllamaProviderID, Type: config.OllamaProviderID}
 
 	t.Run("model top_k is injected into extra_body for known custom providers", func(t *testing.T) {
 		model := Model{
@@ -727,22 +670,6 @@ func TestGetProviderOptionsTopKExtraBody(t *testing.T) {
 		assert.EqualValues(t, 7, parsed.ExtraBody["top_k"])
 	})
 
-	t.Run("is not injected for providers outside the known-custom-provider default branch", func(t *testing.T) {
-		model := Model{
-			CatwalkCfg: catwalk.Model{ID: "glm-5.2"},
-			ModelCfg:   config.SelectedModel{Provider: "zai", TopK: ptr(int64(40))},
-		}
-		providerCfg := config.ProviderConfig{ID: string(catwalk.InferenceProviderZAI), Type: openaicompat.Name}
-
-		opts := getProviderOptions(model, providerCfg)
-
-		raw, ok := opts[openaicompat.Name]
-		require.True(t, ok)
-		parsed, ok := raw.(*openaicompat.ProviderOptions)
-		require.True(t, ok)
-		_, hasTopK := parsed.ExtraBody["top_k"]
-		assert.False(t, hasTopK)
-	})
 }
 
 func TestGetProviderOptionsMalformedFallback(t *testing.T) {
@@ -773,45 +700,11 @@ func TestGetProviderOptionsMalformedFallback(t *testing.T) {
 }
 
 func TestCallTopK(t *testing.T) {
-	knownCustomProviderCfg := config.ProviderConfig{ID: "ollama", Type: "ollama"}
+	cfg := config.ProviderConfig{ID: config.OllamaProviderID, Type: config.OllamaProviderID}
 
-	tests := []struct {
-		name        string
-		providerCfg config.ProviderConfig
-		want        *int64
-	}{
-		{
-			name:        "suppressed for known custom providers",
-			providerCfg: knownCustomProviderCfg,
-			want:        nil,
-		},
-		{
-			name:        "passed through for openai-compat hosted providers",
-			providerCfg: config.ProviderConfig{ID: "zai", Type: openaicompat.Name},
-			want:        ptr(int64(40)),
-		},
-		{
-			name:        "passed through for anthropic",
-			providerCfg: config.ProviderConfig{ID: "anthropic", Type: catwalk.Type(anthropic.Name)},
-			want:        ptr(int64(40)),
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := callTopK(tc.providerCfg, ptr(int64(40)))
-			if tc.want == nil {
-				assert.Nil(t, got)
-				return
-			}
-			require.NotNil(t, got)
-			assert.Equal(t, *tc.want, *got)
-		})
-	}
-
-	t.Run("nil input stays nil regardless of provider", func(t *testing.T) {
-		assert.Nil(t, callTopK(knownCustomProviderCfg, nil))
-		assert.Nil(t, callTopK(config.ProviderConfig{Type: openaicompat.Name}, nil))
-	})
+	// top_k is carried in extra_body, never on the call itself.
+	assert.Nil(t, callTopK(cfg, ptr(int64(40))))
+	assert.Nil(t, callTopK(cfg, nil))
 }
 
 func ptr[T any](v T) *T { return &v }

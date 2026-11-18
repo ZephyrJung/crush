@@ -25,10 +25,6 @@ func (m *UI) programStatus() *tea.ProgramStatus {
 		ps.State = tea.ProgramStateBlocked
 		ps.Kind = tea.ProgramStatusKindQuestion
 		ps.Message = "Questions need your input"
-	case m.dialog != nil && m.dialog.ContainsDialog(dialog.AWSSSOID):
-		ps.State = tea.ProgramStateBlocked
-		ps.Kind = tea.ProgramStatusKindAuth
-		ps.Message = "AWS sign-in required"
 	case m.isAgentBusy():
 		ps.State = tea.ProgramStateWorking
 	case m.turnOutcome != "":

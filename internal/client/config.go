@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/charmbracelet/crush/internal/config"
-	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/proto"
 )
 
@@ -73,91 +72,6 @@ func (c *Client) SetCompactMode(ctx context.Context, id string, scope config.Sco
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to set compact mode: status code %d", rsp.StatusCode)
-	}
-	return nil
-}
-
-// SetProviderAPIKey sets a provider API key on the server. The wire
-// format tags the credential with an explicit Kind so the server can
-// decode it back into the right Go type — JSON's `any` loses that
-// information across the socket.
-func (c *Client) SetProviderAPIKey(ctx context.Context, id string, scope config.Scope, providerID string, apiKey any) error {
-	var (
-		kind proto.APIKeyKind
-		raw  json.RawMessage
-	)
-	switch v := apiKey.(type) {
-	case string:
-		kind = proto.APIKeyKindString
-		b, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Errorf("failed to marshal api key string: %w", err)
-		}
-		raw = b
-	case *oauth.Token:
-		if v == nil {
-			return fmt.Errorf("oauth token is nil")
-		}
-		kind = proto.APIKeyKindOAuth
-		b, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Errorf("failed to marshal oauth token: %w", err)
-		}
-		raw = b
-	default:
-		return fmt.Errorf("unsupported api key type %T", apiKey)
-	}
-
-	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/config/provider-key", id), nil, jsonBody(proto.ConfigProviderKeyRequest{
-		Scope:      scope,
-		ProviderID: providerID,
-		Kind:       kind,
-		APIKey:     raw,
-	}), http.Header{"Content-Type": []string{"application/json"}})
-	if err != nil {
-		return fmt.Errorf("failed to set provider API key: %w", err)
-	}
-	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to set provider API key: status code %d", rsp.StatusCode)
-	}
-	return nil
-}
-
-// ImportCopilot attempts to import a GitHub Copilot token on the
-// server.
-func (c *Client) ImportCopilot(ctx context.Context, id string) (*oauth.Token, bool, error) {
-	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/config/import-copilot", id), nil, nil, nil)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to import copilot: %w", err)
-	}
-	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("failed to import copilot: status code %d", rsp.StatusCode)
-	}
-	var result struct {
-		Token   *oauth.Token `json:"token"`
-		Success bool         `json:"success"`
-	}
-	if err := json.NewDecoder(rsp.Body).Decode(&result); err != nil {
-		return nil, false, fmt.Errorf("failed to decode import copilot response: %w", err)
-	}
-	return result.Token, result.Success, nil
-}
-
-// RefreshOAuthToken refreshes an OAuth token for a provider on the
-// server.
-func (c *Client) RefreshOAuthToken(ctx context.Context, id string, scope config.Scope, providerID string) error {
-	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/config/refresh-oauth", id), nil, jsonBody(struct {
-		Scope      config.Scope `json:"scope"`
-		ProviderID string       `json:"provider_id"`
-	}{Scope: scope, ProviderID: providerID}), http.Header{"Content-Type": []string{"application/json"}})
-	if err != nil {
-		return fmt.Errorf("failed to refresh OAuth token: %w", err)
-	}
-	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to refresh OAuth token: status code %d", rsp.StatusCode)
 	}
 	return nil
 }

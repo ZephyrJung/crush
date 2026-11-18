@@ -1,14 +1,9 @@
 package config
 
 import (
-	"cmp"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
-	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -17,7 +12,6 @@ import (
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/hooks"
 	"github.com/charmbracelet/crush/internal/oauth"
-	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/invopop/jsonschema"
 )
 
@@ -101,10 +95,6 @@ type ProviderConfig struct {
 	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,default=openai"`
 	// The provider's API key.
 	APIKey string `json:"api_key,omitempty" jsonschema:"description=API key for authentication with the provider,example=$OPENAI_API_KEY"`
-	// The original API key template before resolution (for re-resolution on auth errors).
-	APIKeyTemplate string `json:"-"`
-	// OAuthToken for providers that use OAuth2 authentication.
-	OAuthToken *oauth.Token `json:"oauth,omitempty" jsonschema:"description=OAuth2 token for authentication with the provider"`
 	// Marks the provider as disabled.
 	Disable bool `json:"disable,omitempty" jsonschema:"description=Whether this provider is disabled,default=false"`
 
@@ -133,33 +123,11 @@ type ProviderConfig struct {
 	// Used to pass extra parameters to the provider.
 	ExtraParams map[string]string `json:"-"`
 
-	// AWSAuthRefresh is a shell command run when Bedrock returns a
-	// credential error. Output is discarded to avoid corrupting the TUI.
-	AWSAuthRefresh string `json:"aws_auth_refresh,omitempty" jsonschema:"description=Shell command to run when AWS credentials expire (Bedrock only)."`
-
 	// Skip cost accumulation for this provider when using subscription or flat rate billing.
 	FlatRate bool `json:"flat_rate,omitempty" jsonschema:"description=Flat-rate mode for this provider"`
 
-	// AutoDiscoverModels controls model discovery via /v1/models endpoint.
-	// When Models is empty and this is nil or true, Crush auto-discovers
-	// models. When true and Models is non-empty, discovered models are
-	// merged in (user-specified models take precedence). When false,
-	// only explicitly listed models are used.
-	AutoDiscoverModels *bool `json:"discover_models,omitempty" jsonschema:"description=Auto-discover models from /v1/models endpoint. When true with existing models they are merged (yours win),default=true"`
-
 	// The provider models
 	Models []catwalk.Model `json:"models,omitempty" jsonschema:"description=List of models available from this provider"`
-
-	// ChatGPTModels lists the models the ChatGPT (Codex) backend grants
-	// when the provider is authenticated with a ChatGPT account. It is
-	// the provider's whole catalog in that case: the API-key models in
-	// Models are not served by the subscription.
-	ChatGPTModels []catwalk.Model `json:"chatgpt_models,omitempty" jsonschema:"-"`
-
-	// GrokModels lists the models the Grok plan grants when the provider
-	// is authenticated with a Grok account. Like ChatGPTModels, it is
-	// the provider's whole catalog in that case.
-	GrokModels []catwalk.Model `json:"grok_models,omitempty" jsonschema:"-"`
 }
 
 // ToProvider converts the [ProviderConfig] to a [catwalk.Provider].
@@ -169,21 +137,6 @@ func (c *ProviderConfig) ToProvider() catwalk.Provider {
 		ID:     catwalk.InferenceProvider(c.ID),
 		Models: c.Models,
 	}
-}
-
-func (c *ProviderConfig) SetupGitHubCopilot() {
-	maps.Copy(c.ExtraHeaders, copilot.Headers())
-}
-
-// HasAPIKey reports whether the provider's api_key resolves to a usable
-// credential. The stored value is often an unresolved template like
-// $OPENAI_API_KEY, which is not a credential until the variable exists.
-func (c *ProviderConfig) HasAPIKey(resolver VariableResolver) bool {
-	if c.APIKey == "" {
-		return false
-	}
-	v, err := resolver.ResolveValue(c.APIKey)
-	return err == nil && v != ""
 }
 
 type MCPType string
@@ -466,19 +419,17 @@ type Options struct {
 	// the SQLite database and workspace overrides. Relative paths are
 	// resolved against the working directory; absolute paths are used
 	// verbatim. After defaulting the stored value is always absolute.
-	DataDirectory             string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data. Relative paths are resolved against the working directory; absolute paths are used as-is.,default=.crush,example=.crush"`
-	DisabledTools             []string     `json:"disabled_tools,omitempty" jsonschema:"description=List of built-in tools to disable and hide from the agent,example=bash,example=sourcegraph"`
-	DisableProviderAutoUpdate bool         `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
-	DisableDefaultProviders   bool         `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled\\, providers must be fully specified in the config file with base_url\\, models\\, and api_key - no merging with defaults occurs,default=false"`
-	Attribution               *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
-	DisableMetrics            bool         `json:"disable_metrics,omitempty" jsonschema:"description=Disable sending metrics,default=false"`
-	InitializeAs              string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
-	AutoLSP                   *bool        `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
-	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
-	Notifications             string       `json:"notifications,omitempty" jsonschema:"description=Notification style to use. Options: auto (default)\\, native\\, osc\\, bell\\, disabled. Auto selects based on environment: native for local sessions\\, osc for SSH (with automatic OSC 99/777 detection).,enum=auto,enum=native,enum=osc,enum=bell,enum=disabled,default=auto"`
-	DisabledSkills            []string     `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=crush-config"`
-	RequestTimeout            *int         `json:"request_timeout,omitempty" jsonschema:"description=Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity between tokens\\, so slow but active streams are never killed; the wait for the first token gets at least five minutes for prompt prefill. 0 disables it\\, negative values are invalid.,default=60,example=120,example=300,example=0"`
-	MaxBackgroundJobs         *int         `json:"max_background_jobs,omitempty" jsonschema:"description=How many background shell jobs may run at once. Jobs that have finished never count against it. 0 or negative restores the default.,default=50,example=10,example=200"`
+	DataDirectory     string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data. Relative paths are resolved against the working directory; absolute paths are used as-is.,default=.crush,example=.crush"`
+	DisabledTools     []string     `json:"disabled_tools,omitempty" jsonschema:"description=List of built-in tools to disable and hide from the agent,example=bash,example=sourcegraph"`
+	Attribution       *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
+	DisableMetrics    bool         `json:"disable_metrics,omitempty" jsonschema:"description=Disable sending metrics,default=false"`
+	InitializeAs      string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
+	AutoLSP           *bool        `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
+	Progress          *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
+	Notifications     string       `json:"notifications,omitempty" jsonschema:"description=Notification style to use. Options: auto (default)\\, native\\, osc\\, bell\\, disabled. Auto selects based on environment: native for local sessions\\, osc for SSH (with automatic OSC 99/777 detection).,enum=auto,enum=native,enum=osc,enum=bell,enum=disabled,default=auto"`
+	DisabledSkills    []string     `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=crush-config"`
+	RequestTimeout    *int         `json:"request_timeout,omitempty" jsonschema:"description=Timeout in seconds for each LLM API request. Streaming responses are aborted only after this much inactivity between tokens\\, so slow but active streams are never killed; the wait for the first token gets at least five minutes for prompt prefill. 0 disables it\\, negative values are invalid.,default=60,example=120,example=300,example=0"`
+	MaxBackgroundJobs *int         `json:"max_background_jobs,omitempty" jsonschema:"description=How many background shell jobs may run at once. Jobs that have finished never count against it. 0 or negative restores the default.,default=50,example=10,example=200"`
 	// PinentryIntegrated renders GPG passphrase/PIN prompts as a native
 	// Crush dialog (loopback pinentry) instead of handing the terminal
 	// over to an external pinentry program. No GPG or git configuration
@@ -933,16 +884,6 @@ func (c *Config) GetModel(provider, model string) *catwalk.Model {
 				return &m
 			}
 		}
-		for _, m := range providerConfig.ChatGPTModels {
-			if m.ID == model {
-				return &m
-			}
-		}
-		for _, m := range providerConfig.GrokModels {
-			if m.ID == model {
-				return &m
-			}
-		}
 	}
 	return nil
 }
@@ -975,21 +916,7 @@ func (c *Config) IsModelAvailable(provider, model string) bool {
 	if !ok || providerConfig.Disable {
 		return false
 	}
-	// A model is available in any of the provider's catalogs: the
-	// API-key list, or the ChatGPT/Grok subscription list fetched on
-	// login. Subscription models live outside Models, so checking only
-	// there would reject a model that is selectable and usable.
 	for _, m := range providerConfig.Models {
-		if m.ID == model {
-			return true
-		}
-	}
-	for _, m := range providerConfig.ChatGPTModels {
-		if m.ID == model {
-			return true
-		}
-	}
-	for _, m := range providerConfig.GrokModels {
 		if m.ID == model {
 			return true
 		}
@@ -997,28 +924,9 @@ func (c *Config) IsModelAvailable(provider, model string) bool {
 	return false
 }
 
-// UsableModels returns the models the current credential can serve: a
-// ChatGPT or Grok login only reaches its subscription's models.
+// UsableModels returns the models available from the provider.
 func (p ProviderConfig) UsableModels() []catwalk.Model {
-	if models, ok := p.SubscriptionModels(); ok {
-		return models
-	}
 	return p.Models
-}
-
-// SubscriptionModels returns the models a ChatGPT or Grok login grants, and
-// whether the provider is signed in with one at all.
-func (p ProviderConfig) SubscriptionModels() ([]catwalk.Model, bool) {
-	if p.OAuthToken == nil {
-		return nil, false
-	}
-	switch catwalk.InferenceProvider(p.ID) {
-	case catwalk.InferenceProviderOpenAI:
-		return p.ChatGPTModels, true
-	case catwalk.InferenceProviderXAI:
-		return p.GrokModels, true
-	}
-	return nil, false
 }
 
 func (c *Config) GetProviderForModel(modelType SelectedModelType) *ProviderConfig {
@@ -1189,107 +1097,6 @@ func (c *Config) SetupAgents() {
 		},
 	}
 	c.Agents = agents
-}
-
-func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
-	var (
-		providerID = catwalk.InferenceProvider(c.ID)
-		testURL    = ""
-		headers    = make(map[string]string)
-		apiKey, _  = resolver.ResolveValue(c.APIKey)
-	)
-
-	switch providerID {
-	case catwalk.InferenceProviderMiniMax, catwalk.InferenceProviderMiniMaxChina:
-		// NOTE: MiniMax has no good endpoint we can use to validate the API key.
-		return nil
-	case catwalk.InferenceProviderAlibabaSingapore:
-		// NOTE: Alibaba has no good endpoint we can use to validate the API key.
-		// Let's at least check the pattern.
-		if !strings.HasPrefix(apiKey, "sk-") {
-			return fmt.Errorf("invalid API key format for provider %s", c.ID)
-		}
-		return nil
-	case catwalk.InferenceProviderBedrock, catwalk.InferenceProviderBedrockEurope:
-		// NOTE: Bedrock has a `/foundation-models` endpoint that we could in
-		// theory use, but apparently the authorization is region-specific,
-		// so it's not so trivial.
-		if strings.HasPrefix(apiKey, "ABSK") { // Bedrock API keys
-			return nil
-		}
-		return errors.New("not a valid bedrock api key")
-	case catwalk.InferenceProviderVercel:
-		// NOTE: Vercel does not validate API keys on the `/models` endpoint.
-		if strings.HasPrefix(apiKey, "vck_") { // Vercel API keys
-			return nil
-		}
-		return errors.New("not a valid vercel api key")
-	case catwalk.InferenceProviderGemini:
-		baseURL, _ := resolver.ResolveValue(c.BaseURL)
-		baseURL = cmp.Or(baseURL, "https://generativelanguage.googleapis.com")
-		testURL = baseURL + "/v1beta/models?key=" + url.QueryEscape(apiKey)
-	}
-
-	if testURL == "" {
-		// The models API endpoint is determined by the provider type, which
-		// describes the API format the provider speaks.
-		switch c.Type {
-		case catwalk.TypeMessages:
-			baseURL, _ := resolver.ResolveValue(c.BaseURL)
-			baseURL = cmp.Or(baseURL, "https://api.anthropic.com")
-
-			testURL = baseURL + "/v1/models"
-
-			headers["x-api-key"] = apiKey
-			headers["anthropic-version"] = "2023-06-01"
-		default:
-			// Completions, responses, and custom provider types all expose
-			// an OpenAI-style /models endpoint.
-			baseURL, _ := resolver.ResolveValue(c.BaseURL)
-			baseURL = cmp.Or(baseURL, "https://api.openai.com/v1")
-
-			if providerID == catwalk.InferenceProviderOpenRouter {
-				testURL = baseURL + "/credits"
-			} else {
-				testURL = baseURL + "/models"
-			}
-
-			headers["Authorization"] = "Bearer " + apiKey
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	client := &http.Client{}
-	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request for provider %s: %w", c.ID, err)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	for k, v := range c.ExtraHeaders {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to create request for provider %s: %w", c.ID, err)
-	}
-	defer resp.Body.Close()
-
-	switch providerID {
-	case catwalk.InferenceProviderZAI:
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
-		}
-	default:
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
-		}
-	}
-	return nil
 }
 
 // resolveEnvs expands every value in envs through the given resolver

@@ -27,10 +27,8 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/catwalk/v3/pkg/catwalk"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/agent"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	agenttools "github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
@@ -85,10 +83,6 @@ const pasteColsThreshold = 1000
 
 // Session details panel max height.
 const sessionDetailsMaxHeight = 20
-
-// hyperCreditsPollInterval is how often the Hyper credits balance is
-// refreshed while no session is running.
-const hyperCreditsPollInterval = 60 * time.Second
 
 // gitBranchPollInterval is how often the workspace's checked-out branch is
 // re-read. A checkout emits no event Crush can subscribe to, so the branch
@@ -187,13 +181,6 @@ type (
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
 
-	// hyperRefreshDoneMsg is sent after a silent Hyper OAuth refresh
-	// finishes. It carries the original model-selection action so the
-	// selection can be resumed.
-	hyperRefreshDoneMsg struct {
-		action dialog.ActionSelectModel
-	}
-
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
 
@@ -201,16 +188,6 @@ type (
 	sessionFilesUpdatesMsg struct {
 		sessionFiles []SessionFile
 	}
-
-	// creditsUpdatedMsg is sent when the remaining Hyper credits have been
-	// fetched from the API. credits is nil when the team has hypercredit
-	// display disabled.
-	creditsUpdatedMsg struct {
-		credits *int
-	}
-
-	// hyperCreditsPollMsg is sent by the Hyper credits poll timer.
-	hyperCreditsPollMsg struct{}
 
 	// gitBranchUpdatedMsg carries the workspace's checked-out branch. branch
 	// is empty when the workspace is not a Git repository or HEAD is
@@ -512,12 +489,6 @@ type UI struct {
 	// animClock drives every spinner, in the transcript and the chrome.
 	animClock animClock
 
-	// hyperCredits is the remaining Hyper credits as last fetched from
-	// the /v1/credits endpoint. It is nil when no fetch has reported a
-	// balance yet, or when the team has hypercredit display disabled, and
-	// no balance is rendered in either case.
-	hyperCredits *int
-
 	// gitBranch is the workspace's checked-out branch as of the last poll,
 	// empty when there is none to show. Reading it costs a file read
 	// locally and a request in client/server mode, so renders take it from
@@ -701,29 +672,14 @@ func (m *UI) Init() tea.Cmd {
 	if initialSession == nil {
 		cmds = append(cmds, m.loadPromptHistory())
 	}
-	// Prime the ChatGPT model catalog: a signed-in OpenAI provider
-	// whose catalog is missing (the fetch at login failed, or the
-	// credentials predate it) refills lazily, so the models dialog shows
-	// the subscription section as soon as it is opened.
-	cmds = append(cmds, m.updateAgentModelCmd(func() tea.Msg {
-		_ = m.com.Workspace.UpdateAgentModel(context.TODO())
-		return nil
-	}))
 	// Prime the memoized busy/permission state off-thread.
 	if cmd := m.dispatchBusyRefresh(); cmd != nil {
 		cmds = append(cmds, cmd)
-	}
-	// The credits balance is shown from the first frame on, so fetch it
-	// right away and keep polling it while Crush sits idle. The poll runs
-	// for every provider: it is a no-op unless Hyper is selected.
-	if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 	// The branch is shown from the first frame on, so read it now and keep
 	// polling for checkouts made outside Crush.
 	cmds = append(cmds, m.fetchGitBranch(), m.gitBranchTicker())
 	cmds = append(cmds, detectNerdFonts(m.com.Config().Options.TUI))
-	cmds = append(cmds, m.hyperCreditsTicker())
 	// Prime the memoized MCP state off-thread. There is deliberately no
 	// wait for server-side MCP initialization: the init gate is
 	// process-local and only armed where mcp.Initialize runs (the server),
@@ -1113,7 +1069,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.session != nil && msg.Payload.ID == m.session.ID {
 			prevHasInProgress := hasInProgressTodo(m.session.Todos)
 			prevPillsHeight := m.pillsAreaHeight()
-			m.updateHyperCredits()
 			m.session = &msg.Payload
 			if !prevHasInProgress && hasInProgressTodo(m.session.Todos) {
 				m.todoIsSpinning = true
@@ -1602,20 +1557,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.ScrollToBottom()
 		}
 		cmds = append(cmds, m.loadPromptHistory())
-	case hyperRefreshDoneMsg:
-		if cmd := m.handleSelectModel(msg.action); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case creditsUpdatedMsg:
-		m.hyperCredits = msg.credits
-	case hyperCreditsPollMsg:
-		// While a session runs every response refreshes the balance, so
-		// the poll only has to cover idle time. Re-arm it either way: the
-		// next poll may well land after the agent went idle again.
-		if m.com.IsHyper() && !m.isAgentBusy() {
-			cmds = append(cmds, m.fetchHyperCredits())
-		}
-		cmds = append(cmds, m.hyperCreditsTicker())
 	case gitBranchUpdatedMsg:
 		m.gitBranch = msg.branch
 	case nerdFontsMsg:
@@ -2311,29 +2252,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if m.focus == uiFocusEditor {
 			cmds = append(cmds, m.textarea.Focus())
 		}
-	case dialog.ActionCloseOAuth:
-		// Same as ActionClose, but with a cleanup command that cancels
-		// the in-flight authorization before the dialog goes away.
-		m.dialog.CloseFrontDialog()
-
-		if msg.Cmd != nil {
-			cmds = append(cmds, msg.Cmd)
-		}
-
-		if isOnboarding {
-			if cmd := m.openModelsDialog(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-
-		if m.focus == uiFocusEditor {
-			cmds = append(cmds, m.textarea.Focus())
-		}
-	case dialog.ActionSelectAuthMethod:
-		m.dialog.CloseDialog(dialog.AuthMethodID)
-		if cmd := m.openAuthenticationDialogWithMethod(msg.Provider, msg.Model, msg.ModelType, msg.UseOAuth); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
 	case dialog.ActionCmd:
 		if msg.Cmd != nil {
 			cmds = append(cmds, msg.Cmd)
@@ -2831,88 +2749,6 @@ func substituteArgs(content string, args map[string]string) string {
 	return content
 }
 
-// refreshHyperAndRetrySelect returns a command that silently refreshes
-// the Hyper OAuth token and then re-runs the model selection. If the
-// refresh fails, the selection resumes with ReAuthenticate set so the
-// OAuth dialog opens.
-func (m *UI) refreshHyperAndRetrySelect(msg dialog.ActionSelectModel) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := m.com.Workspace.RefreshOAuthToken(ctx, config.ScopeGlobal, "hyper"); err != nil {
-			slog.Warn("Hyper OAuth refresh failed, requesting re-auth", "error", err)
-			msg.ReAuthenticate = true
-		}
-		return hyperRefreshDoneMsg{action: msg}
-	}
-}
-
-// updateHyperCredits refreshes the displayed Hyper balance from the most
-// recent /v1/credits fetch. The balance is fetched on startup, polled
-// while idle and refreshed on every response during a session, so reading
-// the stored value here is enough: until the first fetch lands the
-// balance is unknown and stays hidden.
-func (m *UI) updateHyperCredits() {
-	if !m.com.IsHyper() {
-		return
-	}
-	m.hyperCredits = hyper.Balance()
-}
-
-// fetchHyperCredits returns a command that asynchronously fetches the
-// remaining Hyper credits from the /v1/credits endpoint. An expired
-// OAuth token is refreshed first so a long-running session keeps
-// reporting a balance.
-func (m *UI) fetchHyperCredits() tea.Cmd {
-	return func() tea.Msg {
-		var (
-			apiKey      string
-			cfg         *config.Config
-			providerCfg config.ProviderConfig
-		)
-		getAPIKey := func() (ok bool) {
-			if cfg = m.com.Config(); cfg == nil || cfg.Providers == nil {
-				return false
-			}
-			if providerCfg, ok = cfg.Providers.Get(hyper.Name); !ok {
-				return false
-			}
-			var err error
-			apiKey, err = m.com.Workspace.Resolver().ResolveValue(providerCfg.APIKey)
-			return err == nil && apiKey != ""
-		}
-		if !getAPIKey() {
-			return nil
-		}
-
-		if providerCfg.OAuthToken != nil && providerCfg.OAuthToken.IsExpired() {
-			ctxRefresh, cancelRefresh := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancelRefresh()
-			if err := m.com.Workspace.RefreshOAuthToken(ctxRefresh, config.ScopeGlobal, hyper.Name); err != nil {
-				slog.Warn("Hyper OAuth refresh failed before fetching credits, trying with existing token", "error", err)
-			} else if !getAPIKey() {
-				return nil
-			}
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		credits, err := hyper.FetchCredits(ctx, apiKey)
-		if err != nil {
-			slog.Warn("Failed to fetch Hyper credits", "error", err)
-			return nil
-		}
-		return creditsUpdatedMsg{credits: credits}
-	}
-}
-
-// hyperCreditsTicker schedules the next Hyper credits poll.
-func (m *UI) hyperCreditsTicker() tea.Cmd {
-	return tea.Tick(hyperCreditsPollInterval, func(time.Time) tea.Msg {
-		return hyperCreditsPollMsg{}
-	})
-}
-
 // fetchGitBranch reads the workspace's checked-out branch off the render
 // path. A failed read keeps whatever the last poll reported.
 func (m *UI) fetchGitBranch() tea.Cmd {
@@ -2998,13 +2834,12 @@ func (m *UI) restoreModelFromSession(msgs []message.Message) tea.Cmd {
 	})
 }
 
-// handleSelectModel performs the model selection after any provider
-// pre-checks (such as a silent Hyper OAuth refresh) have completed.
+// handleSelectModel applies the model selected in the dialog. The only
+// provider is the built-in local Ollama provider, so no sign-in or
+// credential check is needed.
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	var cmds []tea.Cmd
-
-	// we ignore dialogs with the oauth id as they need to be able to be dismissed
-	if m.isAgentBusy() && !m.dialog.ContainsDialog(dialog.OAuthID) {
+	if m.isAgentBusy() {
 		return util.ReportWarn("Agent is busy, please wait...")
 	}
 
@@ -3013,81 +2848,10 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		return util.ReportError(errors.New("configuration not found"))
 	}
 
-	var (
-		providerID   = msg.Model.Provider
-		isCopilot    = providerID == string(catwalk.InferenceProviderCopilot)
-		isConfigured = func() bool { _, ok := cfg.Providers.Get(providerID); return ok }
-		isOnboarding = m.state == uiOnboarding
-	)
-
-	// For Hyper, if the stored OAuth token is expired, try a silent
-	// refresh before deciding whether the provider is configured. Keeps
-	// users from hitting a 401 on their first message after the
-	// short-lived access token ages out.
-	if !msg.ReAuthenticate && providerID == "hyper" {
-		if pc, ok := cfg.Providers.Get(providerID); ok && pc.OAuthToken != nil && pc.OAuthToken.IsExpired() {
-			return m.refreshHyperAndRetrySelect(msg)
-		}
-	}
-
-	// Attempt to import GitHub Copilot tokens from VSCode if available.
-	if isCopilot && !isConfigured() && !msg.ReAuthenticate {
-		m.com.Workspace.ImportCopilot()
-	}
-
-	// The OpenAI and xAI providers hold exactly one credential: an
-	// account login or an API key. The empty model ID marks the OAuth
-	// flow's hand-off message (sign-in completed, or the method choice
-	// going to OAuth), and a catalog model needs one of the credentials
-	// before it can serve.
-	if providerID == string(catwalk.InferenceProviderOpenAI) ||
-		providerID == string(catwalk.InferenceProviderXAI) {
-		providerCfg, _ := cfg.Providers.Get(providerID)
-		if msg.Model.Model == "" {
-			m.dialog.CloseDialog(dialog.ModelsID)
-			if providerCfg.OAuthToken != nil && !msg.ReAuthenticate {
-				// A sign-in just completed: reopen the list so the user
-				// can pick from the now-available catalog.
-				m.dialog.CloseDialog(dialog.OAuthID)
-				if cmd := m.openModelsDialog(); cmd != nil {
-					return cmd
-				}
-				return nil
-			}
-			return m.openAuthenticationDialog(msg.Provider, msg.Model, msg.ModelType)
-		}
-		if providerCfg.OAuthToken == nil && !providerCfg.HasAPIKey(m.com.Workspace.Resolver()) {
-			m.dialog.CloseDialog(dialog.ModelsID)
-			return m.openAuthenticationDialog(msg.Provider, msg.Model, msg.ModelType)
-		}
-	}
-
-	if !isConfigured() || msg.ReAuthenticate {
+	providerID := msg.Model.Provider
+	if _, ok := cfg.Providers.Get(providerID); !ok {
 		m.dialog.CloseDialog(dialog.ModelsID)
-		if cmd := m.openAuthenticationDialog(msg.Provider, msg.Model, msg.ModelType); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		return tea.Batch(cmds...)
-	}
-
-	// A ChatGPT or Grok sign-in swaps the provider's catalog for the one
-	// the account serves, so a model chosen before the flow may no longer
-	// exist afterward. Apply the remembered choice only when the refreshed
-	// catalog still offers it; otherwise reopen the list and say so rather
-	// than silently falling back to a default.
-	if providerID == string(catwalk.InferenceProviderOpenAI) ||
-		providerID == string(catwalk.InferenceProviderXAI) {
-		if !cfg.IsModelAvailable(providerID, msg.Model.Model) {
-			m.dialog.CloseDialog(dialog.ModelsID)
-			cmds = append(cmds, util.ReportError(fmt.Errorf(
-				"%s isn't offered by your %s account; choose another model",
-				msg.Model.Model, cmp.Or(msg.Provider.Name, providerID),
-			)))
-			if cmd := m.openModelsDialog(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return tea.Batch(cmds...)
-		}
+		return util.ReportError(fmt.Errorf("provider %q is not configured", providerID))
 	}
 
 	if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, msg.ModelType, msg.Model); err != nil {
@@ -3095,13 +2859,11 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	} else {
 		if msg.ModelType == config.SelectedModelTypeLarge {
 			// Swap the theme live based on the newly selected large
-			// model's provider. Skipped when the provider resolves to
-			// the already-active theme, which avoids a full markdown
-			// re-render of the transcript on every selection.
+			// model's provider. Skipped when the theme is unchanged, which
+			// avoids re-rendering the transcript for no visible change.
 			m.applyThemeForProvider(providerID)
 		}
 		if _, ok := cfg.Models[config.SelectedModelTypeSmall]; !ok {
-			// Ensure small model is set is unset.
 			smallModel := m.com.Workspace.GetDefaultSmallModel(providerID)
 			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, config.SelectedModelTypeSmall, smallModel); err != nil {
 				cmds = append(cmds, util.ReportError(err))
@@ -3121,121 +2883,24 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		if catwalkModel := cfg.GetModel(msg.Model.Provider, msg.Model.Model); catwalkModel != nil && catwalkModel.Name != "" {
 			modelName = catwalkModel.Name
 		}
-		modelMsg := fmt.Sprintf("%s model changed to %s", modelType, modelName)
-
-		return util.NewInfoMsg(modelMsg)
+		return util.NewInfoMsg(fmt.Sprintf("%s model changed to %s", modelType, modelName))
 	}))
 
-	m.dialog.CloseDialog(dialog.APIKeyInputID)
-	m.dialog.CloseDialog(dialog.OAuthID)
 	m.dialog.CloseDialog(dialog.ModelsID)
 
-	if isOnboarding {
+	if m.state == uiOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
 		m.com.Config().SetupAgents()
 		if err := m.com.Workspace.InitCoderAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
-		// The agent just came up: re-fetch the memoized ready/model state
-		// so the landing view shows the selected model without waiting for
-		// the TTL backstop.
 		m.invalidateBusyCaches()
 		if cmd := m.dispatchBusyRefresh(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	} else if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 
 	return tea.Batch(cmds...)
-}
-
-func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType) tea.Cmd {
-	var (
-		dlg dialog.Dialog
-		cmd tea.Cmd
-
-		isOnboarding = m.state == uiOnboarding
-	)
-
-	switch provider.ID {
-	case "hyper":
-		dlg, cmd = dialog.NewOAuthHyper(m.com, isOnboarding, provider, model, modelType)
-	case catwalk.InferenceProviderCopilot:
-		dlg, cmd = dialog.NewOAuthCopilot(m.com, isOnboarding, provider, model, modelType)
-	case catwalk.InferenceProviderOpenAI:
-		providerCfg, _ := m.com.Config().Providers.Get(string(provider.ID))
-		hasAPIKey := providerCfg.HasAPIKey(m.com.Workspace.Resolver())
-		switch {
-		case model.Model == "" || providerCfg.OAuthToken != nil:
-			// The sign-in placeholder, or a re-authentication while the
-			// ChatGPT login is the credential in force.
-			dlg, cmd = dialog.NewOAuthOpenAI(m.com, isOnboarding, provider, model, modelType)
-		case !hasAPIKey:
-			// No credential at all: let the user pick the method.
-			dlg = dialog.NewAuthMethod(m.com, isOnboarding, provider, model, modelType)
-		default:
-			// An API key is the credential in force: edit it.
-			dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
-		}
-	case catwalk.InferenceProviderXAI:
-		providerCfg, _ := m.com.Config().Providers.Get(string(provider.ID))
-		hasAPIKey := providerCfg.HasAPIKey(m.com.Workspace.Resolver())
-		switch {
-		case model.Model == "" || providerCfg.OAuthToken != nil:
-			// The sign-in flow's hand-off, or a re-authentication while
-			// the Grok login is the credential in force.
-			dlg, cmd = dialog.NewOAuthGrok(m.com, isOnboarding, provider, model, modelType)
-		case !hasAPIKey:
-			// No credential at all: let the user pick the method.
-			dlg = dialog.NewAuthMethod(m.com, isOnboarding, provider, model, modelType)
-		default:
-			// An API key is the credential in force: edit it.
-			dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
-		}
-	default:
-		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
-	}
-
-	if m.dialog.ContainsDialog(dlg.ID()) {
-		m.dialog.BringToFront(dlg.ID())
-		return nil
-	}
-
-	m.dialog.OpenDialogWithGrace(dlg)
-	return cmd
-}
-
-// openAuthenticationDialogWithMethod opens the authentication dialog for
-// the method the user chose in the auth method picker. The model the
-// user selected is carried through the OAuth flow so the choice persists;
-// handleSelectModel applies it only when the signed-in catalog still
-// offers it and errors otherwise.
-func (m *UI) openAuthenticationDialogWithMethod(provider catwalk.Provider, model config.SelectedModel, modelType config.SelectedModelType, useOAuth bool) tea.Cmd {
-	isOnboarding := m.state == uiOnboarding
-
-	var (
-		dlg dialog.Dialog
-		cmd tea.Cmd
-	)
-	if useOAuth {
-		switch provider.ID {
-		case catwalk.InferenceProviderOpenAI:
-			dlg, cmd = dialog.NewOAuthOpenAI(m.com, isOnboarding, provider, model, modelType)
-		case catwalk.InferenceProviderXAI:
-			dlg, cmd = dialog.NewOAuthGrok(m.com, isOnboarding, provider, model, modelType)
-		}
-	} else {
-		dlg, cmd = dialog.NewAPIKeyInput(m.com, isOnboarding, provider, model, modelType)
-	}
-
-	if m.dialog.ContainsDialog(dlg.ID()) {
-		m.dialog.BringToFront(dlg.ID())
-		return nil
-	}
-
-	m.dialog.OpenDialogWithGrace(dlg)
-	return cmd
 }
 
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
@@ -3783,7 +3448,6 @@ func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 		m.detailsOpen,
 		area.Dx(),
 		m.lspErrorCount(),
-		m.hyperCredits,
 		m.gitBranchLabel(),
 		m.subAgentsRunning,
 	)
@@ -5361,7 +5025,7 @@ func (m *UI) renderEditorView(width int) string {
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
 func (m *UI) cacheSidebarLogo(width int) {
-	m.sidebarLogo = renderLogo(m.com.Styles, true, m.com.IsHyper(), width)
+	m.sidebarLogo = renderLogo(m.com.Styles, true, width)
 }
 
 // applyThemeForProvider swaps the active theme to the one associated with
@@ -6195,23 +5859,10 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 			Title:   "Crush is waiting...",
 			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
 		}))
-		// Show what the stored balance says right away, and fetch again:
-		// the refresh for the turn's last response is only kicked off once
-		// its request finishes, so it may still be in flight here.
-		m.updateHyperCredits()
-		if m.com.IsHyper() {
-			cmds = append(cmds, m.fetchHyperCredits())
-		}
 	case notify.TypeAgentError:
 		// Terminal edge like TypeAgentFinished; fall through to the
 		// busy/queue refresh below.
 		m.endPendingTurn(n.SessionID)
-	case notify.TypeReAuthenticate:
-		return m.handleReAuthenticate(n.ProviderID)
-	case notify.TypeAWSSSOAuth:
-		return m.handleAWSSSOAuth(n.AWSSOCommand, n.AWSSOURL)
-	case notify.TypeAWSSSOAuthResult:
-		return m.handleAWSSSOAuthResult(n.Message)
 	default:
 		return nil
 	}
@@ -6228,65 +5879,6 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
-}
-
-func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
-	cfg := m.com.Config()
-	if cfg == nil {
-		return nil
-	}
-	providerCfg, ok := cfg.Providers.Get(providerID)
-	if !ok {
-		return nil
-	}
-	agentCfg, ok := cfg.Agents[config.AgentCoder]
-	if !ok {
-		return nil
-	}
-	return m.openAuthenticationDialog(providerCfg.ToProvider(), cfg.Models[agentCfg.Model], agentCfg.Model)
-}
-
-// handleAWSSSOAuth opens the AWS SSO progress dialog (or updates the SSO URL
-// on an already-open one). The refresh command runs in the coordinator; this
-// dialog is a display surface driven by agent notifications.
-func (m *UI) handleAWSSSOAuth(command, url string) tea.Cmd {
-	// Update the URL on an already-open dialog.
-	if existing := m.dialog.Dialog(dialog.AWSSSOID); existing != nil {
-		if awsDlg, ok := existing.(*dialog.AWSSSO); ok && url != "" {
-			awsDlg.SetURL(url)
-		}
-		m.dialog.BringToFront(dialog.AWSSSOID)
-		return nil
-	}
-	if command == "" {
-		return nil
-	}
-	dlg, cmd := dialog.NewAWSSSO(m.com, command)
-	if url != "" {
-		dlg.SetURL(url)
-	}
-	m.dialog.OpenDialogWithGrace(dlg)
-	return cmd
-}
-
-// handleAWSSSOAuthResult finishes the AWS SSO dialog once the refresh command
-// exits: it closes on success or shows the error so the user can dismiss it.
-func (m *UI) handleAWSSSOAuthResult(errMsg string) tea.Cmd {
-	existing := m.dialog.Dialog(dialog.AWSSSOID)
-	if existing == nil {
-		return nil
-	}
-	awsDlg, ok := existing.(*dialog.AWSSSO)
-	if !ok {
-		return nil
-	}
-	if errMsg == "" {
-		// Success: the turn retries transparently, so no need to linger.
-		m.dialog.CloseDialog(dialog.AWSSSOID)
-		return nil
-	}
-	awsDlg.Finish(errMsg)
-	return nil
 }
 
 // newSession clears the current session state and prepares for a new session.
@@ -6718,7 +6310,7 @@ func (m *UI) disableDockerMCP() tea.Msg {
 }
 
 // renderLogo renders the Crush logo with the given styles and dimensions.
-func renderLogo(t *styles.Styles, compact, hyper bool, width int) string {
+func renderLogo(t *styles.Styles, compact bool, width int) string {
 	return logo.Render(t.Logo.GradCanvas, version.Version, compact, logo.Opts{
 		FieldColor:   t.Logo.FieldColor,
 		TitleColorA:  t.Logo.TitleColorA,
@@ -6726,7 +6318,6 @@ func renderLogo(t *styles.Styles, compact, hyper bool, width int) string {
 		CharmColor:   t.Logo.CharmColor,
 		VersionColor: t.Logo.VersionColor,
 		Width:        width,
-		Hyper:        hyper,
 	})
 }
 

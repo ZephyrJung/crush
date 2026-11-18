@@ -106,11 +106,10 @@ func TestTruncationInfoItemKeepsFullFooter(t *testing.T) {
 
 	build := func(reason message.FinishReason) *message.Message {
 		return &message.Message{
-			ID:             "info",
-			Role:           message.Assistant,
-			Provider:       "hyper",
-			Model:          "prism",
-			PrismModelName: "Prism Router",
+			ID:       "info",
+			Role:     message.Assistant,
+			Provider: "hyper",
+			Model:    "prism",
 			Parts: []message.ContentPart{
 				message.Finish{Reason: reason, Time: finishTime.Unix()},
 			},
@@ -123,17 +122,14 @@ func TestTruncationInfoItemKeepsFullFooter(t *testing.T) {
 	info := NewAssistantInfoItem(&sty, build(message.FinishReasonMaxTokens), cfg, time.Unix(0, 0))
 	out := info.Render(80)
 	require.Contains(t, out, "in ", "duration footer")
-	require.Contains(t, out, "Prism Router", "model line")
 
-	// The same holds without a Prism route: a truncated turn on an
-	// ordinary model is still the last turn of its prompt, so it gets
-	// the info footer rather than the compact header that reads as a
-	// running loop.
+	// A truncated turn on an ordinary model is still the last turn of
+	// its prompt, so it gets the info footer rather than the compact
+	// header that reads as a running loop.
 	plain := build(message.FinishReasonMaxTokens)
-	plain.PrismModelName = ""
 	require.True(t, ShouldShowAssistantInfo(plain))
 	plainInfo := NewAssistantInfoItem(&sty, plain, cfg, time.Unix(0, 0))
-	require.Contains(t, plainInfo.Render(80), "in ", "duration footer without Prism")
+	require.Contains(t, plainInfo.Render(80), "in ", "duration footer")
 
 	// An intermediate tool-use turn still renders the compact header.
 	compact := NewAssistantInfoItem(&sty, build(message.FinishReasonToolUse), cfg, time.Unix(0, 0))

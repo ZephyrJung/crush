@@ -13,16 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
-	"testing"
-	"time"
 
 	"charm.land/catwalk/v3/pkg/catwalk"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/csync"
-	"github.com/charmbracelet/crush/internal/discover"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/fsext"
@@ -33,36 +28,6 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
-
-const defaultCatwalkURL = "https://catwalk.charm.land"
-
-// legacyProviderTypes maps provider type values from the catwalk v2
-// schema onto the v3 endpoint types that describe the same API format, so
-// configs written before the migration keep working. Custom provider
-// types with registered enrichers (ollama, litellm, ...) are not listed
-// here and pass through unchanged.
-var legacyProviderTypes = map[catwalk.Type]catwalk.Type{
-	"openai":        catwalk.TypeResponses,
-	"openai-compat": catwalk.TypeCompletions,
-	"openrouter":    catwalk.TypeCompletions,
-	"vercel":        catwalk.TypeCompletions,
-	"anthropic":     catwalk.TypeMessages,
-	"azure":         catwalk.TypeResponses,
-	"bedrock":       catwalk.TypeMessages,
-	"google":        catwalk.TypeCompletions,
-	"google-vertex": catwalk.TypeCompletions,
-}
-
-// NormalizeProviderType maps a catwalk v2 provider type onto the v3
-// endpoint type describing the same API format. Types that are already
-// v3 or are not legacy names pass through unchanged. catwalk's v3 data
-// still carries v2 names for some providers (OpenAI, MiniMax, ...).
-func NormalizeProviderType(t catwalk.Type) catwalk.Type {
-	if mapped, ok := legacyProviderTypes[t]; ok {
-		return mapped
-	}
-	return t
-}
 
 // legacyModelPricingFields maps catwalk v2 model cost fields onto their
 // v3 pricing counterparts.
@@ -304,40 +269,13 @@ func Load(ctx context.Context, workingDir, dataDir string, debug bool) (*ConfigS
 		assignIfNil(&cfg.Options.TUI.Transparent, true)
 	}
 
-	// Load known providers, this loads the config from catwalk. A failed
-	// refresh still yields the cached or embedded catalog, so only an empty
-	// list is fatal: starting up without providers is worse than starting
-	// up with slightly stale ones. Pass a Hyper token refresher so the
-	// catalog fetch can retry on 401.
-	providers, err := LoadProviders(ctx, cfg, func(ctx context.Context) error {
-		return store.RefreshOAuthToken(ctx, ScopeGlobal, "hyper")
-	})
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
-	}
-	if err != nil {
-		if len(providers) == 0 {
-			return nil, err
-		}
-		slog.Warn("Continuing with the previously known providers", "error", err)
-	}
+	// Crush uses a single built-in Ollama provider; there is no external
+	// catalog to fetch and no credentials to refresh.
+	providers := BuiltinProviders()
 	store.knownProviders = providers
 
-	// When Catwalk refreshed its catalog this run, give the model
-	// catalogs that shadow Catwalk's the same treatment: the ChatGPT and
-	// Grok catalogs are otherwise only fetched at login and would freeze
-	// there while Catwalk keeps moving. Best effort; a failed fetch keeps
-	// the catalog loaded from config.
-	//
-	// The refetches publish a copy-on-write config, so re-read it
-	// afterwards: the mutations below must land on the live config rather
-	// than a snapshot the store has already replaced.
-	if CatwalkUpdated() {
-		fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		store.refetchOpenAIModels(fetchCtx, ScopeGlobal)
-		store.refetchGrokModels(fetchCtx, ScopeGlobal)
-		cancel()
-		cfg = store.Config()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
 	}
 
 	env := env.New()
@@ -437,250 +375,18 @@ func PushPopCrushEnv() func() {
 }
 
 func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env env.Env, resolver VariableResolver, knownProviders []catwalk.Provider) error {
-	knownProviderNames := make(map[string]bool)
-	restore := PushPopCrushEnv()
-	defer restore()
-
-	// When disable_default_providers is enabled, skip all default/embedded
-	// providers entirely. Users must fully specify any providers they want.
-	// We skip to the custom provider validation loop which handles all
-	// user-configured providers uniformly.
-	if c.Options.DisableDefaultProviders {
-		knownProviders = nil
-	}
-
-	for _, p := range knownProviders {
-		knownProviderNames[string(p.ID)] = true
-		config, configExists := c.Providers.Get(string(p.ID))
-		// if the user configured a known provider we need to allow it to override a couple of parameters
-		if configExists {
-			if config.BaseURL != "" {
-				p.APIEndpoint = config.BaseURL
-			}
-			if config.APIKey != "" {
-				p.APIKey = config.APIKey
-			}
-			if len(config.Models) > 0 {
-				models := []catwalk.Model{}
-				seen := make(map[string]bool)
-
-				for _, model := range config.Models {
-					if seen[model.ID] {
-						continue
-					}
-					seen[model.ID] = true
-					if model.Name == "" {
-						model.Name = model.ID
-					}
-					models = append(models, model)
-				}
-				for _, model := range p.Models {
-					if seen[model.ID] {
-						continue
-					}
-					seen[model.ID] = true
-					if model.Name == "" {
-						model.Name = model.ID
-					}
-					models = append(models, model)
-				}
-
-				p.Models = models
-			}
-		}
-
-		headers := map[string]string{}
-		if len(p.DefaultHeaders) > 0 {
-			maps.Copy(headers, p.DefaultHeaders)
-		}
-		if len(config.ExtraHeaders) > 0 {
-			maps.Copy(headers, config.ExtraHeaders)
-		}
-		// Provider headers use the same error contract as MCP headers:
-		// a failing $(...) aborts the provider load with a clear
-		// message, and a header that resolves to the empty string
-		// (unset bare $VAR under lenient nounset, $(echo), or literal
-		// "") is dropped from the outgoing request.
-		for k, v := range headers {
-			resolved, err := resolver.ResolveValue(v)
-			if err != nil {
-				return fmt.Errorf("resolving provider %s header %q: %w", p.ID, k, err)
-			}
-			if resolved == "" {
-				delete(headers, k)
-				continue
-			}
-			headers[k] = resolved
-		}
-		// Start from user config so all user fields survive without
-		// explicit copying. Overlay catwalk identity/endpoint fields
-		// (already merged with user overrides above).
-		prepared := config
-		prepared.ID = string(p.ID)
-		prepared.Name = p.Name
-		prepared.BaseURL = p.APIEndpoint
-		prepared.APIKey = p.APIKey
-		prepared.APIKeyTemplate = p.APIKey // Store original template for re-resolution
-		prepared.Type = p.Type
-		prepared.Models = p.Models
-		prepared.ExtraHeaders = headers
-		if prepared.ExtraParams == nil {
-			prepared.ExtraParams = make(map[string]string)
-		}
-
-		switch {
-		case p.ID == catwalk.InferenceProviderAnthropic && config.OAuthToken != nil:
-			// Claude Code subscription is not supported anymore. Remove to show onboarding.
-			// RemoveConfigField persists the deletion to disk. The in-memory
-			// state is kept consistent by the Providers.Del call below; any
-			// concurrent reload that races with this write will also see the
-			// removal because it re-reads from disk.
-			store.RemoveConfigField(ScopeGlobal, "providers.anthropic")
-			c.Providers.Del(string(p.ID))
-			continue
-		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
-			prepared.SetupGitHubCopilot()
-		}
-
-		switch p.ID {
-		// Handle specific providers that require additional configuration
-		case catwalk.InferenceProviderVertexAI:
-			var (
-				project  = env.Get("VERTEXAI_PROJECT")
-				location = env.Get("VERTEXAI_LOCATION")
-			)
-			if project == "" || location == "" {
-				if configExists {
-					slog.Warn("Skipping Vertex AI provider due to missing credentials")
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-			prepared.ExtraParams["project"] = project
-			prepared.ExtraParams["location"] = location
-		case catwalk.InferenceProviderAzure:
-			endpoint, err := resolver.ResolveValue(p.APIEndpoint)
-			if err != nil || endpoint == "" {
-				if configExists {
-					slog.Warn("Skipping Azure provider due to missing API endpoint", "provider", p.ID, "error", err)
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-			prepared.BaseURL = endpoint
-			prepared.ExtraParams["apiVersion"] = env.Get("AZURE_OPENAI_API_VERSION")
-		case catwalk.InferenceProviderBedrock, catwalk.InferenceProviderBedrockEurope:
-			if p.APIKey == "" && !hasAWSCredentials(env) {
-				if configExists {
-					slog.Warn("Skipping Bedrock provider due to missing AWS credentials")
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-		case catwalk.InferenceProvider("hyper"):
-			if apiKey := env.Get("HYPER_API_KEY"); apiKey != "" {
-				prepared.APIKey = apiKey
-				prepared.APIKeyTemplate = apiKey
-			} else {
-				v, err := resolver.ResolveValue(p.APIKey)
-				if v == "" || err != nil {
-					if configExists {
-						slog.Warn("Skipping Hyper provider due to missing API key", "provider", p.ID)
-						c.Providers.Del(string(p.ID))
-					}
-					continue
-				}
-			}
-		default:
-			// An OAuth login is a credential too: providers signed in
-			// through OAuth (e.g. OpenAI with a ChatGPT account) are
-			// configured even when no API key is present.
-			if config.OAuthToken != nil {
-				break
-			}
-			// if the provider api or endpoint are missing we skip them
-			v, err := resolver.ResolveValue(p.APIKey)
-			if v == "" || err != nil {
-				if configExists {
-					slog.Warn("Skipping provider due to missing API key", "provider", p.ID)
-					c.Providers.Del(string(p.ID))
-				}
-				continue
-			}
-		}
-		c.Providers.Set(string(p.ID), prepared)
-	}
-
-	discovered := store.resolveDiscoveredModels(ctx, discoveryJobs(c, knownProviderNames), resolver)
-
-	// Validate the custom providers.
-	for id, providerConfig := range c.Providers.Seq2() {
-		if knownProviderNames[id] {
-			continue
-		}
-
-		// Make sure the provider ID is set.
-		providerConfig.ID = id
-		providerConfig.Name = cmp.Or(providerConfig.Name, id) // Use ID as name if not set
-		// Migrate legacy provider types onto the catwalk v3 endpoint types.
-		providerConfig.Type = NormalizeProviderType(providerConfig.Type)
-		// Default to OpenAI chat completions if not set.
-		providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeCompletions)
-		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
-			providerConfig.Type != hyper.Name &&
-			!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
-			slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-
-		if providerConfig.Disable {
-			slog.Debug("Skipping custom provider due to disable flag", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-		apiKey, err := resolver.ResolveValue(providerConfig.APIKey)
-		if apiKey == "" || err != nil {
-			slog.Warn("Provider is missing API key, this might be OK for local providers", "provider", id)
-		}
-		baseURL, err := resolver.ResolveValue(providerConfig.BaseURL)
-		if baseURL == "" || err != nil {
-			slog.Warn("Skipping custom provider due to missing API endpoint", "provider", id, "error", err)
-			c.Providers.Del(id)
-			continue
-		}
-
-		if models, ok := discovered[id]; ok {
-			providerConfig.Models = mergeModels(providerConfig.Models, models)
-		}
-
-		if len(providerConfig.Models) == 0 {
-			slog.Warn("Skipping custom provider because the provider has no models", "provider", id)
-			c.Providers.Del(id)
-			continue
-		}
-
-		// Custom-provider headers share the MCP error contract; see
-		// the known-provider loop above.
-		for k, v := range providerConfig.ExtraHeaders {
-			resolved, err := resolver.ResolveValue(v)
-			if err != nil {
-				return fmt.Errorf("resolving provider %s header %q: %w", id, k, err)
-			}
-			if resolved == "" {
-				delete(providerConfig.ExtraHeaders, k)
-				continue
-			}
-			providerConfig.ExtraHeaders[k] = resolved
-		}
-
-		c.Providers.Set(id, providerConfig)
-	}
-
-	if c.Providers.Len() == 0 && c.Options.DisableDefaultProviders {
-		return fmt.Errorf("default providers are disabled and there are no custom providers are configured")
-	}
-
+	// Crush is fixed to the built-in local Ollama provider. User-defined
+	// providers and the external provider catalog are ignored entirely.
+	p := builtinOllamaProvider()
+	c.Providers.Reset(map[string]ProviderConfig{
+		OllamaProviderID: {
+			ID:      OllamaProviderID,
+			Name:    p.Name,
+			BaseURL: p.APIEndpoint,
+			Type:    catwalk.Type(OllamaProviderID),
+			Models:  p.Models,
+		},
+	})
 	return nil
 }
 
@@ -789,14 +495,6 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	// Project specific skills dirs.
 	c.Options.SkillsPaths = append(c.Options.SkillsPaths, ProjectSkillsDir(workingDir)...)
 
-	if str, ok := os.LookupEnv("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE"); ok {
-		c.Options.DisableProviderAutoUpdate, _ = strconv.ParseBool(str)
-	}
-
-	if str, ok := os.LookupEnv("CRUSH_DISABLE_DEFAULT_PROVIDERS"); ok {
-		c.Options.DisableDefaultProviders, _ = strconv.ParseBool(str)
-	}
-
 	if c.Options.Attribution == nil {
 		c.Options.Attribution = &Attribution{
 			TrailerStyle:  TrailerStyleAssistedBy,
@@ -881,78 +579,17 @@ func (c *Config) applyLSPDefaults() {
 }
 
 func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (largeModel SelectedModel, smallModel SelectedModel, err error) {
-	if len(knownProviders) == 0 && c.Providers.Len() == 0 {
-		err = fmt.Errorf("no providers configured, please configure at least one provider")
-		return largeModel, smallModel, err
-	}
-
-	// Use the first provider enabled based on the known providers order
-	// if no provider found that is known use the first provider configured
-	for _, p := range knownProviders {
-		providerConfig, ok := c.Providers.Get(string(p.ID))
-		if !ok || providerConfig.Disable {
-			continue
-		}
-		defaultLargeModel := c.GetModel(string(p.ID), p.DefaultLargeModelID)
-		if defaultLargeModel == nil {
-			slog.Warn("Default large model %s not found for provider %s", p.DefaultLargeModelID, p.ID)
-			if len(providerConfig.Models) == 0 {
-				return largeModel, smallModel, fmt.Errorf("default large model %s not found for provider %s", p.DefaultLargeModelID, p.ID)
-			}
-			defaultLargeModel = &providerConfig.Models[0]
-		}
-		largeModel = SelectedModel{
-			Provider:        string(p.ID),
-			Model:           defaultLargeModel.ID,
-			MaxTokens:       defaultLargeModel.DefaultMaxTokens,
-			ReasoningEffort: defaultLargeModel.Reasoning.DefaultEffortLevel,
-		}
-
-		defaultSmallModel := c.GetModel(string(p.ID), p.DefaultSmallModelID)
-		if defaultSmallModel == nil {
-			slog.Warn("Default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
-			if len(providerConfig.Models) == 0 {
-				return largeModel, smallModel, fmt.Errorf("default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
-			}
-			defaultSmallModel = &providerConfig.Models[0]
-		}
-		smallModel = SelectedModel{
-			Provider:        string(p.ID),
-			Model:           defaultSmallModel.ID,
-			MaxTokens:       defaultSmallModel.DefaultMaxTokens,
-			ReasoningEffort: defaultSmallModel.Reasoning.DefaultEffortLevel,
-		}
-		return largeModel, smallModel, err
-	}
-
-	enabledProviders := c.EnabledProviders()
-	slices.SortFunc(enabledProviders, func(a, b ProviderConfig) int {
-		return strings.Compare(a.ID, b.ID)
-	})
-
-	if len(enabledProviders) == 0 {
-		err = fmt.Errorf("no providers configured, please configure at least one provider")
-		return largeModel, smallModel, err
-	}
-
-	providerConfig := enabledProviders[0]
-	if len(providerConfig.Models) == 0 {
-		err = fmt.Errorf("provider %s has no models configured", providerConfig.ID)
-		return largeModel, smallModel, err
-	}
-	defaultLargeModel := c.GetModel(providerConfig.ID, providerConfig.Models[0].ID)
 	largeModel = SelectedModel{
-		Provider:  providerConfig.ID,
-		Model:     defaultLargeModel.ID,
-		MaxTokens: defaultLargeModel.DefaultMaxTokens,
+		Provider:  OllamaProviderID,
+		Model:     OllamaLargeModelID,
+		MaxTokens: 4096,
 	}
-	defaultSmallModel := c.GetModel(providerConfig.ID, providerConfig.Models[0].ID)
 	smallModel = SelectedModel{
-		Provider:  providerConfig.ID,
-		Model:     defaultSmallModel.ID,
-		MaxTokens: defaultSmallModel.DefaultMaxTokens,
+		Provider:  OllamaProviderID,
+		Model:     OllamaSmallModelID,
+		MaxTokens: 4096,
 	}
-	return largeModel, smallModel, err
+	return largeModel, smallModel, nil
 }
 
 // resolvedModels holds the result of resolving user-configured model
@@ -977,31 +614,11 @@ func resolveSelectedModels(cfg *Config, knownProviders []catwalk.Provider) (reso
 	}
 	large, small := defaultLarge, defaultSmall
 
-	largeModelSelected, largeModelConfigured := cfg.Models[SelectedModelTypeLarge]
-	if largeModelConfigured {
-		large, result.LargeFallback = applySelection(cfg, defaultLarge, largeModelSelected)
+	if selected, ok := cfg.Models[SelectedModelTypeLarge]; ok {
+		large, result.LargeFallback = applySelection(cfg, defaultLarge, selected)
 	}
-	_, smallModelConfigured := cfg.Models[SelectedModelTypeSmall]
-	if smallModelConfigured {
-		small, result.SmallFallback = applySelection(cfg, defaultSmall, cfg.Models[SelectedModelTypeSmall])
-	}
-
-	// When small isn't explicitly configured and the provider isn't a
-	// known built-in, use the large model as the small model. This
-	// prevents two different models from being requested concurrently
-	// for local/openai-compat providers.
-	if !smallModelConfigured {
-		isKnownProvider := false
-		for _, kp := range knownProviders {
-			if string(kp.ID) == small.Provider {
-				isKnownProvider = true
-				break
-			}
-		}
-		if !isKnownProvider {
-			slog.Warn("Using large model as small model for unknown provider", "provider", large.Provider, "model", large.Model)
-			small = large
-		}
+	if selected, ok := cfg.Models[SelectedModelTypeSmall]; ok {
+		small, result.SmallFallback = applySelection(cfg, defaultSmall, selected)
 	}
 
 	result.Large = large
@@ -1202,46 +819,6 @@ func loadFromBytes(configs [][]byte) (*Config, error) {
 		return nil, err
 	}
 	return &config, nil
-}
-
-func hasAWSCredentials(env env.Env) bool {
-	if env.Get("AWS_BEARER_TOKEN_BEDROCK") != "" {
-		return true
-	}
-
-	if env.Get("AWS_ACCESS_KEY_ID") != "" && env.Get("AWS_SECRET_ACCESS_KEY") != "" {
-		return true
-	}
-
-	if env.Get("AWS_PROFILE") != "" || env.Get("AWS_DEFAULT_PROFILE") != "" {
-		return true
-	}
-
-	if env.Get("AWS_REGION") != "" || env.Get("AWS_DEFAULT_REGION") != "" {
-		return true
-	}
-
-	if env.Get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" ||
-		env.Get("AWS_CONTAINER_CREDENTIALS_FULL_URI") != "" {
-		return true
-	}
-
-	// File-based credential discovery requires filesystem stats, so do it
-	// last and skip it under test. Checking testing.Testing() before the
-	// os.Stat call (rather than after, in the && tail) ensures the syscall
-	// is never issued during tests, where it otherwise ran unconditionally
-	// and only had its result discarded.
-	if testing.Testing() {
-		return false
-	}
-	if _, err := os.Stat(filepath.Join(home.Dir(), ".aws/credentials")); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(home.Dir(), ".aws/login")); err == nil {
-		return true
-	}
-
-	return false
 }
 
 // migrateDisableNotifications migrates the deprecated disable_notifications

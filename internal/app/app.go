@@ -16,7 +16,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/catwalk/v3/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/charmbracelet/crush/internal/agent/notify"
@@ -258,7 +257,6 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		cancel()
 		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
 	}
-	go app.refreshDiscoveredModels(ctx, app.AgentCoordinator)
 
 	// Set up callback for LSP state updates.
 	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
@@ -275,23 +273,6 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	go app.LSPManager.TrackConfigured(ctx)
 
 	return app, nil
-}
-
-// refreshDiscoveredModels updates custom provider models that startup took
-// from the discovery cache. The coordinator is passed in rather than read
-// from app so this goroutine never races a later InitCoderAgent.
-func (app *App) refreshDiscoveredModels(ctx context.Context, coordinator agent.Coordinator) {
-	defer log.RecoverPanic("app.refreshDiscoveredModels", nil)
-	reloaded, err := app.config.RefreshDiscoveredModels(ctx)
-	if err != nil {
-		slog.Warn("Failed to apply refreshed provider models", "error", err)
-	}
-	if !reloaded {
-		return
-	}
-	if err := coordinator.UpdateModels(ctx); err != nil {
-		slog.Warn("Failed to update agent models after discovery", "error", err)
-	}
 }
 
 // Config returns the pure-data configuration.
@@ -681,103 +662,16 @@ func (app *App) overrideReasoningEffort(ctx context.Context, reasoningEffort str
 	return app.AgentCoordinator.UpdateModels(ctx)
 }
 
-// GetDefaultSmallModel returns the default small model for the given
-// provider. Falls back to the large model if no default is found.
+// GetDefaultSmallModel returns the fixed default small model. The only
+// provider is the built-in local Ollama provider, so no catalog lookup or
+// per-provider fallback is needed.
 func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 	cfg := app.config.Config()
-	largeModelCfg := cfg.Models[config.SelectedModelTypeLarge]
-
-	// Find the provider in the known providers list to get its default small model.
-	knownProviders, _ := config.Providers(cfg)
-	var knownProvider *catwalk.Provider
-	for _, p := range knownProviders {
-		if string(p.ID) == providerID {
-			knownProvider = &p
-			break
-		}
+	if providerID != config.OllamaProviderID {
+		slog.Warn("Unknown model provider", "provider", providerID)
+		return cfg.Models[config.SelectedModelTypeLarge]
 	}
-
-	// For unknown/local providers, use the large model as small.
-	if knownProvider == nil {
-		slog.Warn("Using large model as small model for unknown provider", "provider", providerID, "model", largeModelCfg.Model)
-		return largeModelCfg
-	}
-
-	defaultSmallModelID := knownProvider.DefaultSmallModelID
-	model := cfg.GetModel(providerID, defaultSmallModelID)
-	if model == nil {
-		slog.Warn("Default small model not found, using large model", "provider", providerID, "model", largeModelCfg.Model)
-		return largeModelCfg
-	}
-
-	// A subscription-authenticated provider only serves the models its
-	// subscription grants, so the default small model must come from that
-	// catalog as well. This applies to ChatGPT-authenticated OpenAI and
-	// Grok-authenticated xAI alike.
-	if largeModelCfg.Provider == providerID {
-		var pick func(config.ProviderConfig) *catwalk.Model
-		switch providerID {
-		case string(catwalk.InferenceProviderOpenAI):
-			pick = chatGPTSmallModel
-		case string(catwalk.InferenceProviderXAI):
-			pick = grokSmallModel
-		}
-		if pick != nil {
-			if pc, ok := cfg.Providers.Get(providerID); ok && pc.OAuthToken != nil {
-				if small := pick(pc); small != nil {
-					return config.SelectedModel{
-						Provider:        providerID,
-						Model:           small.ID,
-						MaxTokens:       small.DefaultMaxTokens,
-						ReasoningEffort: small.Reasoning.DefaultEffortLevel,
-					}
-				}
-				return largeModelCfg
-			}
-		}
-	}
-
-	slog.Info("Using provider default small model", "provider", providerID, "model", defaultSmallModelID)
-	return config.SelectedModel{
-		Provider:        providerID,
-		Model:           defaultSmallModelID,
-		MaxTokens:       model.DefaultMaxTokens,
-		ReasoningEffort: model.Reasoning.DefaultEffortLevel,
-	}
-}
-
-// chatGPTSmallModel picks a lightweight model from the ChatGPT catalog,
-// preferring a "mini" variant and falling back to the last entry (the
-// catalog lists heavier models first). Returns nil when the catalog is
-// empty.
-func chatGPTSmallModel(pc config.ProviderConfig) *catwalk.Model {
-	for i := range pc.ChatGPTModels {
-		if strings.Contains(pc.ChatGPTModels[i].ID, "mini") {
-			return &pc.ChatGPTModels[i]
-		}
-	}
-	if len(pc.ChatGPTModels) > 0 {
-		return &pc.ChatGPTModels[len(pc.ChatGPTModels)-1]
-	}
-	return nil
-}
-
-// grokSmallModel picks a lightweight model from the Grok catalog,
-// preferring a "fast" or "mini" variant and falling back to the last
-// entry (the catalog lists heavier models first). Returns nil when the
-// catalog is empty.
-func grokSmallModel(pc config.ProviderConfig) *catwalk.Model {
-	for _, marker := range []string{"fast", "mini"} {
-		for i := range pc.GrokModels {
-			if strings.Contains(pc.GrokModels[i].ID, marker) {
-				return &pc.GrokModels[i]
-			}
-		}
-	}
-	if len(pc.GrokModels) > 0 {
-		return &pc.GrokModels[len(pc.GrokModels)-1]
-	}
-	return nil
+	return cfg.Models[config.SelectedModelTypeSmall]
 }
 
 func (app *App) setupEvents() {

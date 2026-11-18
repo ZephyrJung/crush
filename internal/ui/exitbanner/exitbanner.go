@@ -58,7 +58,6 @@ func logoSection(t *styles.Styles, contentWidth int) string {
 		TitleColorB:  t.Logo.TitleColorB,
 		CharmColor:   t.Logo.CharmColor,
 		VersionColor: t.Logo.VersionColor,
-		Hyper:        false,
 	})
 	// Wrap the greeting and the message together: wrapping only the message
 	// leaves the greeting's own width unaccounted for and overflows the frame.

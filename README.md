@@ -6,14 +6,14 @@
     <a href="https://github.com/charmbracelet/crush/actions"><img src="https://github.com/charmbracelet/crush/actions/workflows/build.yml/badge.svg" alt="Build Status"></a>
 </p>
 
-<p align="center">Your new coding bestie, now available in your favourite terminal.<br />Your tools, your code, and your workflows, wired into your LLM of choice.</p>
-<p align="center">终端里的编程新搭档，<br />无缝接入你的工具、代码与工作流，全面兼容主流 LLM 模型。</p>
+<p align="center">Your new coding bestie, now available in your favourite terminal.<br />Your tools, your code, and your workflows, wired into local Ollama models.</p>
+<p align="center">终端里的编程新搭档，<br />无缝接入你的工具、代码与工作流，固定使用本地 Ollama 模型。</p>
 
 <p align="center"><img width="800" alt="Crush Demo" src="https://github.com/user-attachments/assets/58280caf-851b-470a-b6f7-d5c4ea8a1968" /></p>
 
 ## Features
 
-- **Multi-Model:** choose from a wide range of LLMs or add your own via OpenAI- or Anthropic-compatible APIs
+- **Two Local Models:** switch between two fixed Ollama models without leaving your session
 - **Flexible:** switch LLMs mid-session while preserving context
 - **Session-Based:** maintain multiple work sessions and contexts per project
 - **LSP-Enhanced:** Crush uses LSPs for additional context, just like you do
@@ -91,21 +91,6 @@ You can use these modules directly in your flake by importing them from NUR. Sin
           programs.crush = {
             enable = true;
             settings = {
-              providers = {
-                openai = {
-                  id = "openai";
-                  name = "OpenAI";
-                  base_url = "https://api.openai.com/v1";
-                  type = "openai";
-                  api_key = "sk-fake123456789abcdef...";
-                  models = [
-                    {
-                      id = "gpt-5.6-sol";
-                      name = "GPT-5.6 Sol";
-                    }
-                  ];
-                };
-              };
               lsp = {
                 go = { command = "gopls"; enabled = true; };
                 nix = { command = "nil"; enabled = true; };
@@ -182,72 +167,18 @@ go install -tags sqlite3_dotlk github.com/charmbracelet/crush@latest
 
 ## Getting Started
 
-The quickest way to get started is to choose a [Hyper][hyper] model from the 
-little model picker. Follow the steps to authenticate and you're ready to go.
+This build of Crush is fixed to the local Ollama provider at
+`http://localhost:11434/v1`. No sign-in, API key or provider configuration is
+needed. Pull the two supported models and start Crush:
 
-<p><a href="https://hyper.charm.land"><img width="340" height="200" alt="Charm Hyper" src="https://github.com/user-attachments/assets/50875289-7992-454d-9f14-9f790413fb5e" /></a></p>
+```bash
+ollama pull qwen3.8:27b-mlx
+ollama pull qwen3.6:35b-mlx
+crush
+```
 
-[Hyper][hyper], from Charm, is the official model provider for Crush. It’s 
-built  on open-weight models and is optimized for Crush, with an emphasis 
-on high-quality inference. There are subscription and prepaid options, including zero data retention 
-(ZDR). It's also GDPR compliant!
-
-[More on Hyper][hyper].
-
-
-## API Keys
-
-You can also use Crush with many other providers such as Anthopic, OpenAI,
-Gemini, OpenRouter and so on. Press <kbd>ctrl+l</kbd> to open the model picker,
-choose the provider of your choice, and paste your API key.
-
-That said, you can also set environment variables for preferred providers:
-
-| Environment Variable        | Provider                                           |
-| --------------------------- | -------------------------------------------------- |
-| `HYPER_API_KEY`             | [Charm Hyper][hyper]                               |
-| `ANTHROPIC_API_KEY`         | Anthropic                                          |
-| `OPENAI_API_KEY`            | OpenAI                                             |
-| `VERCEL_API_KEY`            | Vercel AI Gateway                                  |
-| `GEMINI_API_KEY`            | Google Gemini                                      |
-| `ZAI_API_KEY`               | Z.ai                                               |
-| `MINIMAX_API_KEY`           | MiniMax                                            |
-| `SYNTHETIC_API_KEY`         | Synthetic                                          |
-| `HF_TOKEN`                  | Hugging Face Inference                             |
-| `CEREBRAS_API_KEY`          | Cerebras                                           |
-| `OPENROUTER_API_KEY`        | OpenRouter                                         |
-| `IONET_API_KEY`             | io.net                                             |
-| `ALIBABA_SINGAPORE_API_KEY` | Alibaba (Singapore)                                |
-| `ALIBABA_US_API_KEY`        | Alibaba (United States)                            |
-| `GROQ_API_KEY`              | Groq                                               |
-| `AVIAN_API_KEY`             | Avian                                              |
-| `OPENCODE_API_KEY`          | OpenCode Zen & Go                                  |
-| `VERTEXAI_PROJECT`          | Google Cloud VertexAI (Gemini)                     |
-| `VERTEXAI_LOCATION`         | Google Cloud VertexAI (Gemini)                     |
-| `AWS_ACCESS_KEY_ID`         | Amazon Bedrock (Claude)                            |
-| `AWS_SECRET_ACCESS_KEY`     | Amazon Bedrock (Claude)                            |
-| `AWS_REGION`                | Amazon Bedrock (Claude)                            |
-| `AWS_PROFILE`               | Amazon Bedrock (Custom Profile)                    |
-| `AWS_BEARER_TOKEN_BEDROCK`  | Amazon Bedrock                                     |
-| `AZURE_OPENAI_API_ENDPOINT` | Azure OpenAI models                                |
-| `AZURE_OPENAI_API_KEY`      | Azure OpenAI models (optional when using Entra ID) |
-| `AZURE_OPENAI_API_VERSION`  | Azure OpenAI models                                |
-| `MOONSHOT_API_KEY`          | Moonshot                                           |
-| `XAI_API_KEY`               | xAI                                                |
-
-[hyper]: https://hyper.charm.land
-
-Also note that Crush can support nearly any provider, including
-[Local Models](#local-models). For more info see
-[Custom Providers](#custom-providers) below.
-
-### By the Way
-
-Is there a provider you’d like to see in Crush? Is there an existing model that needs an update?
-
-Crush’s default model listing is managed in [Catwalk](https://github.com/charmbracelet/catwalk), a community-supported, open source repository of Crush-compatible models, and you’re welcome to contribute.
-
-<a href="https://github.com/charmbracelet/catwalk"><img width="174" height="174" alt="Catwalk Badge" src="https://github.com/user-attachments/assets/95b49515-fe82-4409-b10d-5beb0873787d" /></a>
+Press <kbd>ctrl+l</kbd> to switch between the large model (`qwen3.8:27b-mlx`)
+and the small model (`qwen3.6:35b-mlx`).
 
 ## Configuration
 
@@ -266,12 +197,6 @@ Windows.
 For example:
 
 ```bash
-# Add Ollama.
-provider add ollama --type ollama --base-url "http://localhost:11434/v1"
-
-# Register a model on Ollama.
-model add ollama/llama3.3 --name "Llama 3.3" --context-window 128000
-
 # Auto-approve some tools.
 permissions allow view edit
 
@@ -334,23 +259,19 @@ files from the internet into your config.
 
 ### Environment Variables
 
-The top-level `env` field sets environment variables at startup, before
-providers are configured. This is useful for variables that affect provider
-authentication (e.g. the AWS SDK credential chain) without wrapping the
-`crush` command in a shell script or exporting them in your shell profile:
+The top-level `env` field sets environment variables at startup, before the
+agent runs. Values support the same `$VAR` and `$(command)` expansion as other
+config fields, so you can reference existing environment variables or shell out
+for a value:
 
 ```json
 {
   "$schema": "https://charm.land/crush.json",
   "env": {
-    "AWS_PROFILE": "my-sso-profile"
+    "MY_TOOL_TOKEN": "$(op read 'op://my-secret-key')"
   }
 }
 ```
-
-Values support the same `$VAR` and `$(command)` expansion as other config
-fields, so you can reference existing environment variables or shell out for
-a value.
 
 ### Themes
 
@@ -750,181 +671,6 @@ option attribution-generated-with true
 - `generated_with`: When true (default), adds `💘 Generated with Crush` line to
   commit messages and PR descriptions
 
-### Custom Providers
-
-Crush supports custom provider configurations for both OpenAI-compatible and
-Anthropic-compatible APIs.
-
-> [!NOTE]
-> The provider type describes the API format the provider speaks. Make sure
-> to choose the right one to ensure the best experience!
->
-> - `responses` should be used when proxying or routing requests through OpenAI.
-> - `completions` should be used when using non-OpenAI providers that have OpenAI-compatible APIs.
-> - `messages` should be used for Anthropic-compatible APIs.
->
-> Legacy values (`openai`, `openai-compat`, `anthropic`) are still accepted and
-> migrated automatically.
-
-#### OpenAI-Compatible APIs
-
-Here’s an example configuration for Deepseek, which uses an OpenAI-compatible
-API. Don't forget to set `DEEPSEEK_API_KEY` in your environment.
-
-```bash
-provider add deepseek --type completions \
-  --base-url "https://api.deepseek.com/v1" \
-  --api-key "$DEEPSEEK_API_KEY"
-
-model add deepseek/deepseek-chat \
-  --name "Deepseek V3" \
-  --context-window 64000 \
-  --default-max-tokens 5000 \
-  --price-input 0.27 \
-  --price-output 1.1 \
-  --price-cache-create 1.1 \
-  --price-cache-hit 0.07
-```
-
-#### Anthropic-Compatible APIs
-
-Custom Anthropic-compatible providers follow this format:
-
-```bash
-provider add custom-anthropic \
-  --type messages \
-  --base-url "https://api.anthropic.com/v1" \
-  --api-key "$ANTHROPIC_API_KEY" \
-  --extra-header anthropic-version 2023-06-01
-
-model add custom-anthropic/claude-sonnet-4-20250514 \
-  --name "Claude Sonnet 4" \
-  --context-window 200000 \
-  --default-max-tokens 50000 \
-  --thinking toggleable \
-  --supports-images true \
-  --price-input 3 \
-  --price-output 15 \
-  --price-cache-create 3.75 \
-  --price-cache-hit 0.3
-```
-
-### Amazon Bedrock
-
-Crush currently supports running Anthropic models through Bedrock, with caching disabled.
-
-A Bedrock provider appears once Crush can find AWS credentials. You can
-authenticate in one of two ways:
-
-**API key.** Set `AWS_BEARER_TOKEN_BEDROCK` to a Bedrock API key. This is the
-simplest option and never expires mid-session.
-
-**AWS credential chain (SSO, profiles, access keys).** Configure AWS the usual
-way with `aws configure` or `aws configure sso`. Crush picks up whatever the
-AWS SDK credential chain resolves, including `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`
-/ `AWS_SECRET_ACCESS_KEY`, or an SSO session. To select a specific profile,
-set `AWS_PROFILE` in your shell (`AWS_PROFILE=myprofile crush`) or in the
-top-level [`env`](#environment-variables) config.
-
-If you authenticate via AWS SSO, your session expires periodically. Set
-`aws_auth_refresh` to a command that refreshes it. When Bedrock returns a
-credential error, Crush runs the command, then retries the request in place
-(no duplicate messages, no manual restart):
-
-```json
-{
-  "$schema": "https://charm.land/crush.json",
-  "env": {
-    "AWS_PROFILE": "my-sso-profile"
-  },
-  "providers": {
-    "bedrock": {
-      "aws_auth_refresh": "aws sso login --profile my-sso-profile"
-    },
-    "bedrock-europe": {
-      "aws_auth_refresh": "aws sso login --profile my-eu-sso-profile"
-    }
-  }
-}
-```
-
-- `aws_auth_refresh` — shell command run when AWS credentials expire (e.g. `aws sso login`)
-
-### Vertex AI Platform
-
-Vertex AI will appear in the list of available providers when `VERTEXAI_PROJECT` and `VERTEXAI_LOCATION` are set. You will also need to be authenticated:
-
-```bash
-$ gcloud auth application-default login
-```
-
-To add specific models to the configuration, configure as such:
-
-```bash
-# crushrc — authentication still comes from gcloud and the VERTEXAI_* env vars.
-provider add vertexai
-
-model add vertexai/claude-sonnet-4@20250514 \
-  --name "VertexAI Sonnet 4" \
-  --context-window 200000 \
-  --default-max-tokens 50000 \
-  --thinking toggleable \
-  --supports-images true \
-  --price-input 3 \
-  --price-output 15 \
-  --price-cache-create 3.75 \
-  --price-cache-hit 0.3
-```
-
-### Local Models
-
-Crush can auto-discovers models from local providers. Add a custom provider
-with `type` set to `llamacpp`, `omlx`, `lmstudio`, `litellm`, or `ollama`
-and leave out the models list. Crush will populate the model list
-automatically.
-
-```bash
-# Piece of cake.
-provider add ollama \
-  --name Ollama \
-  --type ollama \
-  --base-url "http://localhost:11434/v1/"
-```
-
-For llama.cpp (`llama-server`), point at the server's base URL:
-
-```bash
-provider add llamacpp \
-  --name "llama.cpp" \
-  --type llamacpp \
-  --base-url "http://localhost:2222"
-```
-
-#### Manual Model Configuration
-
-You can still list models explicitly. User-defined models always take
-precedence over discovered ones, and any fields you set won't be overwritten
-by auto-discovery. Auto discovery will run if the model list is empty for any
-`openai-compat` provider or if you pass `"discover_models": true` it will merge
-the found models with your hand configured ones.
-
-```bash
-# crushrc
-provider add ollama \
-  --name Ollama \
-  --type ollama \
-  --base-url "http://localhost:11434/v1/" \
-  --discover-models true
-
-model add ollama/qwen3:30b \
-  --name "Qwen 3 30B" \
-  --context-window 256000 \
-  --default-max-tokens 20000
-```
-
-The `--discover-models true` flag merges discovered models with the one above;
-your explicit model fields win on conflicts.
-
 ## Logging
 
 Sometimes you need to look at logs. Luckily, Crush logs all sorts of
@@ -952,60 +698,6 @@ option debug true
 option debug-lsp true
 ```
 
-## Provider Auto-Updates
-
-By default, Crush automatically checks for the latest and greatest list of
-providers and models from [Catwalk](https://github.com/charmbracelet/catwalk),
-the open source Crush provider database. This means that when new providers and
-models are available, or when model metadata changes, Crush automatically
-updates your local configuration.
-
-### Custom provider catalog
-
-You can also override [Catwalk](https://github.com/charmbracelet/catwalk) default URL (for testing, using a fork).
-
-You can do so by setting the `CATWALK_URL` environment variable. (e.g. `export CATWALK_URL=http://localhost:8000`)
-
-### Disabling automatic provider updates
-
-For those with restricted internet access, or those who prefer to work in
-air-gapped environments, this might not be what you want, and this feature can
-be disabled.
-
-To disable automatic provider updates in your `crushrc`:
-
-```bash
-option provider-auto-update false
-```
-
-Or set the `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE` environment variable:
-
-```bash
-export CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1
-```
-
-### Manually updating providers
-
-Manually updating providers is possible with the `crush update-providers`
-command:
-
-```bash
-# Update providers remotely from Catwalk.
-crush update-providers
-
-# Update providers from a custom Catwalk base URL.
-crush update-providers https://example.com/
-
-# Update providers from a local file.
-crush update-providers /path/to/local-providers.json
-
-# Reset providers to the embedded version, embedded at crush at build time.
-crush update-providers embedded
-
-# For more info:
-crush update-providers --help
-```
-
 ## Metrics
 
 Crush records pseudonymous usage metrics (tied to a device-specific hash),
@@ -1015,10 +707,6 @@ collected.
 
 Details on exactly what’s collected are in the source code ([here](https://github.com/charmbracelet/crush/tree/main/internal/event)
 and [here](https://github.com/charmbracelet/crush/blob/main/internal/llm/agent/event.go)).
-
-Also, when you use Crush with [Hyper][hyper], your Crush usage metrics may 
-be associated with your Hyper account to help us improve the service and
-diagnose issues. For more information, see [the Hyper Privacy Policy](https://hyper.charm.land/legal/privacy-policy).
 
 Either way, you can opt out of metrics collection at any time by setting 
 the following  in your environment:

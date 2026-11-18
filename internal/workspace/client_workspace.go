@@ -22,7 +22,6 @@ import (
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
-	"github.com/charmbracelet/crush/internal/oauth"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pinentry"
 	"github.com/charmbracelet/crush/internal/proto"
@@ -672,14 +671,6 @@ func (w *ClientWorkspace) SetCompactMode(scope config.Scope, enabled bool) error
 	return err
 }
 
-func (w *ClientWorkspace) SetProviderAPIKey(scope config.Scope, providerID string, apiKey any) error {
-	err := w.client.SetProviderAPIKey(context.Background(), w.workspaceID(), scope, providerID, apiKey)
-	if err == nil {
-		w.refreshWorkspace()
-	}
-	return err
-}
-
 func (w *ClientWorkspace) SetConfigField(scope config.Scope, key string, value any) error {
 	err := w.client.SetConfigField(context.Background(), w.workspaceID(), scope, key, value)
 	if err == nil {
@@ -704,27 +695,6 @@ func (w *ClientWorkspace) RemoveConfigField(scope config.Scope, key string) erro
 	}
 	return err
 }
-
-func (w *ClientWorkspace) ImportCopilot() (*oauth.Token, bool) {
-	token, ok, err := w.client.ImportCopilot(context.Background(), w.workspaceID())
-	if err != nil {
-		return nil, false
-	}
-	if ok {
-		w.refreshWorkspace()
-	}
-	return token, ok
-}
-
-func (w *ClientWorkspace) RefreshOAuthToken(ctx context.Context, scope config.Scope, providerID string) error {
-	err := w.client.RefreshOAuthToken(ctx, w.workspaceID(), scope, providerID)
-	if err == nil {
-		w.refreshWorkspace()
-	}
-	return err
-}
-
-// -- Project lifecycle --
 
 func (w *ClientWorkspace) ProjectNeedsInitialization() (bool, error) {
 	return w.client.ProjectNeedsInitialization(context.Background(), w.workspaceID())
@@ -1485,9 +1455,6 @@ func (w *ClientWorkspace) translateEvent(ev any) tea.Msg {
 			SessionTitle: e.Payload.SessionTitle,
 			RunID:        e.Payload.RunID,
 			Type:         notify.Type(e.Payload.Type),
-			ProviderID:   e.Payload.ProviderID,
-			AWSSOCommand: e.Payload.AWSSOCommand,
-			AWSSOURL:     e.Payload.AWSSOURL,
 		}
 		if e.Payload.Error != nil {
 			n.Message = e.Payload.Error.Error()

@@ -68,17 +68,6 @@ func TestProgramStatus(t *testing.T) {
 			},
 		},
 		{
-			name: "aws sign-in",
-			setup: func(u *UI) {
-				dlg, _ := dialog.NewAWSSSO(u.com, "aws sso login")
-				u.dialog.OpenDialog(dlg)
-			},
-			want: tea.ProgramStatus{
-				State: tea.ProgramStateBlocked, App: "crush",
-				Kind: tea.ProgramStatusKindAuth, Message: "AWS sign-in required",
-			},
-		},
-		{
 			name: "working wins over the last outcome",
 			setup: func(u *UI) {
 				u.turnOutcome = tea.ProgramStateDone

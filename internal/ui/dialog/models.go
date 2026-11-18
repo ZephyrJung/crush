@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"log/slog"
-	"slices"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -200,13 +199,10 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 				break
 			}
 
-			isEdit := key.Matches(msg, m.keyMap.Edit)
-
 			return ActionSelectModel{
-				Provider:       modelItem.prov,
-				Model:          modelItem.SelectedModel(),
-				ModelType:      modelItem.SelectedModelType(),
-				ReAuthenticate: isEdit,
+				Provider:  modelItem.prov,
+				Model:     modelItem.SelectedModel(),
+				ModelType: modelItem.SelectedModelType(),
 			}
 		case key.Matches(msg, m.keyMap.Tab):
 			if m.isOnboarding {
@@ -345,7 +341,8 @@ func (m *Models) isSelectedConfigured() bool {
 	return isConfigured
 }
 
-// setProviderItems sets the provider items in the list.
+// setProviderItems sets the provider items in the list. Only the built-in
+// local Ollama provider is available.
 func (m *Models) setProviderItems() error {
 	t := m.com.Styles
 	cfg := m.com.Config()
@@ -355,121 +352,32 @@ func (m *Models) setProviderItems() error {
 	currentModel := cfg.Models[selectedType]
 	recentItems := cfg.RecentModels[selectedType]
 
-	// Track providers already added to avoid duplicates
-	addedProviders := make(map[string]bool)
-
-	// Get a list of known providers to compare against
-	knownProviders, err := config.Providers(cfg)
-	if err != nil && len(knownProviders) == 0 {
-		return fmt.Errorf("failed to get providers: %w", err)
-	}
-
-	containsProviderFunc := func(id string) func(p catwalk.Provider) bool {
-		return func(p catwalk.Provider) bool {
-			return p.ID == catwalk.InferenceProvider(id)
-		}
-	}
-
-	// itemsMap contains the keys of added model items.
 	itemsMap := make(map[string]*ModelItem)
-	groups := []ModelGroup{}
-	for id, p := range cfg.Providers.Seq2() {
-		if p.Disable {
-			continue
-		}
-
-		// Check if this provider is not in the known providers list
-		if !slices.ContainsFunc(knownProviders, containsProviderFunc(id)) ||
-			!slices.ContainsFunc(m.providers, containsProviderFunc(id)) {
-			provider := p.ToProvider()
-
-			// Add this unknown provider to the list
-			name := cmp.Or(p.Name, id)
-
-			addedProviders[id] = true
-
-			group := NewModelGroup(t, name, true)
-			for _, model := range p.Models {
-				item := NewModelItem(t, provider, model, m.modelType, false)
-				group.AppendItems(item)
-				itemsMap[item.ID()] = item
-				if model.ID == currentModel.Model && string(provider.ID) == currentModel.Provider {
-					selectedItemID = item.ID()
-				}
-			}
-			if len(group.Items) > 0 {
-				groups = append(groups, group)
-			}
-		}
-	}
-
-	// Now add known providers from the predefined list.
-	// Providers already has Hyper at the front of the list.
+	var groups []ModelGroup
 	for _, provider := range m.providers {
 		providerID := string(provider.ID)
-		if addedProviders[providerID] {
-			continue
-		}
-
-		providerConfig, providerConfigured := cfg.Providers.Get(providerID)
-		if providerConfigured && providerConfig.Disable {
+		providerConfig, configured := cfg.Providers.Get(providerID)
+		if !configured || providerConfig.Disable {
 			continue
 		}
 
 		displayProvider := provider
-		if providerConfigured {
-			displayProvider.Name = cmp.Or(providerConfig.Name, displayProvider.Name)
-			modelIndex := make(map[string]int, len(displayProvider.Models))
-			for i, model := range displayProvider.Models {
-				modelIndex[model.ID] = i
-			}
-			for _, model := range providerConfig.Models {
-				if model.ID == "" {
-					continue
-				}
-				if idx, ok := modelIndex[model.ID]; ok {
-					if model.Name != "" {
-						displayProvider.Models[idx].Name = model.Name
-					}
-					continue
-				}
-				model.Name = cmp.Or(model.Name, model.ID)
-				displayProvider.Models = append(displayProvider.Models, model)
-				modelIndex[model.ID] = len(displayProvider.Models) - 1
-			}
-		}
-
+		displayProvider.Name = cmp.Or(providerConfig.Name, displayProvider.Name)
+		displayProvider.Models = providerConfig.Models
 		name := cmp.Or(displayProvider.Name, providerID)
 
-		// A ChatGPT or Grok login lists only its subscription's models; the
-		// API catalog would 404. Until that list is fetched, show the catalog.
-		if subscriptionModels, _ := providerConfig.SubscriptionModels(); subscriptionModels != nil {
-			group := NewModelGroup(t, name, true)
-			for _, model := range subscriptionModels {
-				item := NewModelItem(t, provider, model, m.modelType, false)
-				group.AppendItems(item)
-				itemsMap[item.ID()] = item
-				if model.ID == currentModel.Model && string(provider.ID) == currentModel.Provider {
-					selectedItemID = item.ID()
-				}
-			}
-			if len(group.Items) > 0 {
-				groups = append(groups, group)
-			}
-			continue
-		}
-
-		group := NewModelGroup(t, name, providerConfigured)
+		group := NewModelGroup(t, name, true)
 		for _, model := range displayProvider.Models {
-			item := NewModelItem(t, provider, model, m.modelType, false)
+			item := NewModelItem(t, displayProvider, model, m.modelType, false)
 			group.AppendItems(item)
 			itemsMap[item.ID()] = item
-			if model.ID == currentModel.Model && string(provider.ID) == currentModel.Provider {
+			if model.ID == currentModel.Model && providerID == currentModel.Provider {
 				selectedItemID = item.ID()
 			}
 		}
-
-		groups = append(groups, group)
+		if len(group.Items) > 0 {
+			groups = append(groups, group)
+		}
 	}
 
 	if len(recentItems) > 0 {

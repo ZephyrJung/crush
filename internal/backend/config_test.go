@@ -105,67 +105,11 @@ func TestSetCompactMode_PublishesConfigChanged(t *testing.T) {
 	awaitConfigChanged(t, evc, ws.ID)
 }
 
-func TestSetProviderAPIKey_PublishesConfigChanged(t *testing.T) {
-	b, ws, evc := newPublishingWorkspace(t)
-
-	require.NoError(t, b.SetProviderAPIKey(ws.ID, config.ScopeGlobal, "openai", "test-key"))
-	awaitConfigChanged(t, evc, ws.ID)
-}
-
 func TestMarkProjectInitialized_PublishesConfigChanged(t *testing.T) {
 	b, ws, evc := newPublishingWorkspace(t)
 
 	require.NoError(t, b.MarkProjectInitialized(ws.ID))
 	awaitConfigChanged(t, evc, ws.ID)
-}
-
-// TestImportCopilot_PublishesConfigChanged exercises the success path
-// by seeding a token file in the location ImportCopilot scans, then
-// asserting the event fires only when ok==true.
-func TestImportCopilot_PublishesConfigChanged(t *testing.T) {
-	// ImportCopilot reads from external user-state directories that
-	// vary by OS. Rather than recreate that setup, drive the
-	// publishing helper directly and assert ImportCopilot's
-	// no-event-on-not-found semantics are preserved.
-	b, ws, evc := newPublishingWorkspace(t)
-
-	// Not-found path: no token exists, so no event must fire.
-	_, ok, err := b.ImportCopilot(ws.ID)
-	require.NoError(t, err)
-	require.False(t, ok, "ImportCopilot should return ok=false when no token is present")
-
-	select {
-	case ev := <-evc:
-		if _, isCC := ev.Payload.(pubsub.Event[proto.ConfigChanged]); isCC {
-			t.Fatal("ImportCopilot must not publish ConfigChanged when nothing was imported")
-		}
-	case <-time.After(100 * time.Millisecond):
-		// Expected: no ConfigChanged.
-	}
-
-	// Helper sanity: publishing manually does fire the event.
-	publishConfigChanged(ws)
-	awaitConfigChanged(t, evc, ws.ID)
-}
-
-// TestRefreshOAuthToken_PublishesConfigChangedOnError verifies that
-// the unhappy path does not publish (mutator returned an error). The
-// happy path requires a real OAuth-capable provider configured with a
-// refreshable token, which is beyond an isolated unit test's scope.
-func TestRefreshOAuthToken_NoEventOnError(t *testing.T) {
-	b, ws, evc := newPublishingWorkspace(t)
-
-	// Provider does not exist → store returns an error → no event.
-	err := b.RefreshOAuthToken(context.Background(), ws.ID, config.ScopeGlobal, "no-such-provider")
-	require.Error(t, err)
-
-	select {
-	case ev := <-evc:
-		if _, isCC := ev.Payload.(pubsub.Event[proto.ConfigChanged]); isCC {
-			t.Fatal("RefreshOAuthToken must not publish ConfigChanged when it errors")
-		}
-	case <-time.After(100 * time.Millisecond):
-	}
 }
 
 // TestDisableDockerMCP_PublishesConfigChanged seeds a Docker MCP entry

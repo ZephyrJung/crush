@@ -26,7 +26,6 @@ type Opts struct {
 	CharmColor   color.Color // Charm™ text color
 	VersionColor color.Color // version text color
 	Width        int         // width of the rendered logo, used for truncation
-	Hyper        bool        // whether it is Crush or Hypercrush
 
 	// When true, stretch a random letterform on each render. Has no effect in
 	// compact mode. Mainly for testing. In production you will want to cache
@@ -40,10 +39,7 @@ type Opts struct {
 // The compact argument determines whether it renders compact for the sidebar
 // or wider for the main pane.
 func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
-	charm := "Charm™"
-	if !o.Hyper {
-		charm = " " + charm
-	}
+	charm := " Charm™"
 
 	fg := func(c color.Color, s string) string {
 		return lipgloss.NewStyle().Foreground(c).Render(s)
@@ -51,25 +47,12 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 
 	// Title.
 	const spacing = 1
-	var hyperLetterforms []letterform
-	if o.Hyper {
-		hyperLetterforms = []letterform{
-			LetterH,
-			LetterYAlt,
-			LetterP,
-			LetterE,
-			LetterR,
-		}
-	}
 	crushLetterforms := []letterform{
 		LetterC,
 		LetterR,
 		LetterU,
 		LetterSAlt,
 		LetterH,
-	}
-	if o.Hyper && !compact {
-		crushLetterforms = append(hyperLetterforms, crushLetterforms...)
 	}
 
 	stretchIndex := -1 // -1 means no stretching.
@@ -81,9 +64,6 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 		stretchIndex = rand.IntN(len(crushLetterforms))
 	}
 	crush := renderWord(spacing, stretchIndex, crushLetterforms...)
-	if o.Hyper && compact {
-		crush = renderWord(spacing, stretchIndex, hyperLetterforms...) + "\n" + crush
-	}
 	crushWidth := lipgloss.Width(crush)
 	b := new(strings.Builder)
 	for r := range strings.SplitSeq(crush, "\n") {
@@ -95,16 +75,13 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	metaRowGap := 1
 	maxVersionWidth := crushWidth - lipgloss.Width(charm) - metaRowGap
 	version = ansi.Truncate(version, maxVersionWidth, "…") // truncate version if too long.
-	if o.Hyper && compact {
-		version += " "
-	}
 	gap := max(0, crushWidth-lipgloss.Width(charm)-lipgloss.Width(version))
 	metaRow := fg(o.CharmColor, charm) + strings.Repeat(" ", gap) + fg(o.VersionColor, version)
 
 	// Join the meta row and big Crush title.
 	crush = strings.TrimSpace(metaRow + "\n" + crush)
 
-	// Narrow version. If this is Hypercrush, this is also a stacked version.
+	// Narrow version for the sidebar.
 	if compact {
 		field := fg(o.FieldColor, strings.Repeat(diag, crushWidth))
 		return strings.Join([]string{field, field, crush, field, ""}, "\n")
@@ -150,9 +127,6 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int, o Opts) string {
 	name := "Crush"
-	if o.Hyper {
-		name = "HYPERCRUSH"
-	}
 	charm := "Charm™"
 	title := t.Logo.SmallCharm.Render(charm)
 	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, name, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor))

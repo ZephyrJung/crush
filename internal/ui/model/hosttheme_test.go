@@ -225,13 +225,13 @@ func TestHostTheme_ProviderSwitchDoesNotOverride(t *testing.T) {
 	m := newHostThemeTestUI(t, nil)
 
 	deliverHostTheme(t, m, hostTheme("#112233"))
-	m.applyThemeForProvider("hyper")
+	m.applyThemeForProvider("ollama")
 	require.Equal(t, "#112233", primaryOf(m), "a provider switch must not replace the host theme")
-	require.Equal(t, "hyper", m.themeKey, "the provider's theme is still recorded")
+	require.Equal(t, "default", m.themeKey, "the provider's theme is still recorded")
 
 	// Once the host clears its theme, the provider's theme applies.
 	deliverHostTheme(t, m, nil)
-	require.Equal(t, hexOf(styles.ThemeForKey("hyper").WorkingGradFromColor), primaryOf(m))
+	require.Equal(t, hexOf(styles.ThemeForKey("default").WorkingGradFromColor), primaryOf(m))
 }
 
 func TestHostTheme_StaleBuildsAreDropped(t *testing.T) {
@@ -259,7 +259,7 @@ func TestHostTheme_PreviewRevertsToHostTheme(t *testing.T) {
 	// A theme preview is open: its snapshot is the theme esc restores.
 	saved := m.com.Styles.Clone()
 	m.preThemeStyles = &saved
-	m.previewTheme(styles.ThemeForKey("hyper"))
+	m.previewTheme(styles.ThemeForKey("default"))
 
 	deliverHostTheme(t, m, hostTheme("#112233"))
 	require.NotEqual(t, "#112233", primaryOf(m), "the preview stays on screen")

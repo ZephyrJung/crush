@@ -1,8 +1,8 @@
 package agent
 
 import (
+	"charm.land/x/vcr"
 	"context"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,9 +10,6 @@ import (
 
 	"charm.land/catwalk/v3/pkg/catwalk"
 	"charm.land/fantasy"
-	"charm.land/fantasy/providers/openaicompat"
-	"charm.land/x/vcr"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/prompt"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/config"
@@ -38,28 +35,6 @@ type fakeEnv struct {
 	history     history.Service
 	filetracker *filetracker.Service
 	lspClients  *csync.Map[string, *lsp.Client]
-}
-
-type builderFunc func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error)
-
-type modelPair struct {
-	name       string
-	largeModel builderFunc
-	smallModel builderFunc
-}
-
-func hyperBuilder(model string) builderFunc {
-	return func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error) {
-		provider, err := openaicompat.New(
-			openaicompat.WithBaseURL(hyper.BaseURL()+"/v1"),
-			openaicompat.WithAPIKey(os.Getenv("CRUSH_HYPER_API_KEY")),
-			openaicompat.WithHTTPClient(&http.Client{Transport: r}),
-		)
-		if err != nil {
-			return nil, err
-		}
-		return provider.LanguageModel(t.Context(), model)
-	}
 }
 
 func testEnv(t *testing.T) fakeEnv {

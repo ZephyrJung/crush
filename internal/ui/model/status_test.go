@@ -30,7 +30,7 @@ func drawStatusLines(t *testing.T, st *Status, w, h int) []string {
 func TestStatusDrawExpandedHelpRowsAlignWithBadge(t *testing.T) {
 	t.Parallel()
 
-	u := newPrismTestUI()
+	u := newStubUI()
 	u.attachments = attachments.New(nil, attachments.Keymap{})
 	st := u.status
 	st.helpKm = u
@@ -58,7 +58,7 @@ func TestStatusDrawExpandedHelpRowsAlignWithBadge(t *testing.T) {
 func TestStatusDrawExpandedHelpRowsAlignWithoutBadge(t *testing.T) {
 	t.Parallel()
 
-	u := newPrismTestUI()
+	u := newStubUI()
 	u.attachments = attachments.New(nil, attachments.Keymap{})
 	st := u.status
 	st.helpKm = u

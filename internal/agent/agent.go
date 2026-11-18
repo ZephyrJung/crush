@@ -16,11 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"os"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,15 +25,6 @@ import (
 
 	"charm.land/catwalk/v3/pkg/catwalk"
 	"charm.land/fantasy"
-	"charm.land/fantasy/providers/anthropic"
-	"charm.land/fantasy/providers/bedrock"
-	"charm.land/fantasy/providers/google"
-	"charm.land/fantasy/providers/openai"
-	"charm.land/fantasy/providers/openrouter"
-	"charm.land/fantasy/providers/vercel"
-	"charm.land/lipgloss/v2"
-	"charm.land/tone"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
@@ -213,10 +201,7 @@ type Model struct {
 	CatwalkCfg catwalk.Model
 	ModelCfg   config.SelectedModel
 	FlatRate   bool
-	// OAuth is true when the provider signs in by OAuth, so a rejected
-	// credential calls for a new sign-in rather than a config change.
-	OAuth bool
-	// ProviderName is the provider's display name, such as "GitHub Copilot".
+	// ProviderName is the provider's display name.
 	ProviderName string
 }
 
@@ -1074,22 +1059,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// handle anthropic signature
-			if anthropicData, ok := reasoning.ProviderMetadata[anthropic.Name]; ok {
-				if reasoning, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok {
-					currentAssistant.AppendReasoningSignature(reasoning.Signature)
-				}
-			}
-			if googleData, ok := reasoning.ProviderMetadata[google.Name]; ok {
-				if reasoning, ok := googleData.(*google.ReasoningMetadata); ok {
-					currentAssistant.AppendThoughtSignature(reasoning.Signature, reasoning.ToolID)
-				}
-			}
-			if openaiData, ok := reasoning.ProviderMetadata[openai.Name]; ok {
-				if reasoning, ok := openaiData.(*openai.ResponsesReasoningMetadata); ok {
-					currentAssistant.SetReasoningResponsesData(reasoning)
-				}
-			}
 			currentAssistant.FinishThinking()
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
@@ -1195,8 +1164,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 			currentAssistant.AddFinish(finishReason, finishMessage, finishDetails)
-			currentAssistant.PrismModelID, currentAssistant.PrismModelName = extractPrismModel(stepResult.ProviderMetadata)
-			currentAssistant.PrismHypercreditSavings, currentAssistant.PrismDollarSavings = extractPrismSavings(stepResult.ProviderMetadata)
 			sessionLock.Lock()
 			defer sessionLock.Unlock()
 
@@ -1205,8 +1172,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				return getSessionErr
 			}
 			usage, estimated := fallbackStepUsage(stepMessages, stepResult)
-			pricingModel := a.modelForStepCost(largeModel, stepResult.ProviderMetadata)
-			a.updateSessionUsage(pricingModel, &updatedSession, usage, a.openrouterCost(stepResult.ProviderMetadata), estimated)
+			a.updateSessionUsage(largeModel, &updatedSession, usage, nil, estimated)
 			_, sessionErr := a.sessions.Save(ctx, updatedSession)
 			if sessionErr != nil {
 				return sessionErr
@@ -1265,7 +1231,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		slog.Info("Agent stream returned error",
 			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err),
-			"oauth", largeModel.OAuth,
 			"is_cancel", isCancelErr)
 		// Fire once the turn's final state is written, whichever return
 		// below is taken, and outlive the cancelled run context.
@@ -1291,7 +1256,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		var providerErr *fantasy.ProviderError
 		var requestTimedOutErr *requestTimeoutError
 		const defaultTitle = "Provider Error"
-		linkStyle := lipgloss.NewStyle().Foreground(tone.Guac).Underline(true)
 		if isCancelErr {
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
 		} else if errors.Is(err, errRefused) {
@@ -1302,20 +1266,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// Checked before the provider branches so a deadline our own
 			// request timeout imposed is never reported as a provider error.
 			currentAssistant.AddFinish(message.FinishReasonError, "Request timed out", requestTimedOutErr.userMessage())
-		} else if largeModel.OAuth && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized {
-			currentAssistant.AddFinish(message.FinishReasonError, "Unauthorized", signInAgainMessage(largeModel))
 		} else if errors.As(err, &providerErr) {
-			if providerErr.Message == "The requested model is not supported." {
-				url := "https://github.com/settings/copilot/features"
-				link := linkStyle.Hyperlink(url, "id=copilot").Render(url)
-				currentAssistant.AddFinish(
-					message.FinishReasonError,
-					"Copilot model not enabled",
-					fmt.Sprintf("%q is not enabled in Copilot. Go to the following page to enable it. Then, wait 5 minutes before trying again. %s", largeModel.CatwalkCfg.Name, link),
-				)
-			} else {
-				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
-			}
+			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
 		} else if errors.As(err, &fantasyErr) {
 			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message)
 		} else if fantasy.IsTransportError(err) {
@@ -1574,12 +1526,6 @@ func (a *sessionAgent) summarize(ctx context.Context, sessionID, trigger string,
 			return a.messages.Update(genCtx, summaryMessage)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// Handle anthropic signature.
-			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
-				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-					summaryMessage.AppendReasoningSignature(signature.Signature)
-				}
-			}
 			summaryMessage.FinishThinking()
 			return a.messages.Update(genCtx, summaryMessage)
 		},
@@ -1604,23 +1550,6 @@ func (a *sessionAgent) summarize(ctx context.Context, sessionID, trigger string,
 		return err
 	}
 
-	var overrideCost *float64
-	for _, step := range resp.Steps {
-		summaryMessage.PrismModelID, summaryMessage.PrismModelName = extractPrismModel(step.ProviderMetadata)
-		summaryMessage.PrismHypercreditSavings, summaryMessage.PrismDollarSavings = extractPrismSavings(step.ProviderMetadata)
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if overrideCost != nil {
-				newCost += *overrideCost
-			}
-			overrideCost = &newCost
-		}
-	}
-	if hyperCost := a.hyperStepsCost(largeModel, resp.Steps); hyperCost != nil {
-		overrideCost = hyperCost
-	}
-
 	// A compaction summary that stopped short is the record the session
 	// goes on reading from, so record and log why it is incomplete
 	// rather than filing it under a clean end_turn. Unknown finishes
@@ -1635,7 +1564,7 @@ func (a *sessionAgent) summarize(ctx context.Context, sessionID, trigger string,
 		return err
 	}
 
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, overrideCost, false)
+	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, nil, false)
 
 	// Just in case, get just the last usage info.
 	usage := resp.Response.Usage
@@ -1666,20 +1595,7 @@ func (a *sessionAgent) summarize(ctx context.Context, sessionID, trigger string,
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
-	if t, _ := strconv.ParseBool(os.Getenv("CRUSH_DISABLE_ANTHROPIC_CACHE")); t {
-		return fantasy.ProviderOptions{}
-	}
-	return fantasy.ProviderOptions{
-		anthropic.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-		bedrock.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-		vercel.Name: &anthropic.ProviderCacheControlOptions{
-			CacheControl: anthropic.CacheControl{Type: "ephemeral"},
-		},
-	}
+	return fantasy.ProviderOptions{}
 }
 
 // sessionHeaders returns the HTTP headers we use for cache affinity on
@@ -2036,27 +1952,7 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 	}
 
 	// Calculate usage and cost.
-	var overrideCost *float64
-	for _, step := range resp.Steps {
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if overrideCost != nil {
-				newCost += *overrideCost
-			}
-			overrideCost = &newCost
-		}
-	}
-	if hyperCost := a.hyperStepsCost(model, resp.Steps); hyperCost != nil {
-		overrideCost = hyperCost
-	}
-
 	cost := usageCost(model.CatwalkCfg.Pricing, resp.TotalUsage)
-
-	// Use override cost if available (e.g., from OpenRouter or Hyper Prism).
-	if overrideCost != nil {
-		cost = *overrideCost
-	}
 
 	// Skip cost accumulation
 	if model.FlatRate {
@@ -2076,41 +1972,9 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 	titleSaved = true
 }
 
-func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float64 {
-	openrouterMetadata, ok := metadata[openrouter.Name]
-	if !ok {
-		return nil
-	}
-
-	opts, ok := openrouterMetadata.(*openrouter.ProviderMetadata)
-	if !ok {
-		return nil
-	}
-	return &opts.Usage.Cost
-}
-
-// extractPrismModel returns the ID and name of the model that actually
-// served the turn, as reported by the Hyper Prism model router headers,
-// or empty strings when the turn was not routed through a Prism model.
-func extractPrismModel(metadata fantasy.ProviderMetadata) (modelID, modelName string) {
-	openaiMeta, ok := metadata[openai.Name]
-	if !ok {
-		return "", ""
-	}
-	pm, ok := openaiMeta.(*openai.ProviderMetadata)
-	if !ok {
-		return "", ""
-	}
-	_ = pm.ExtraField(hyper.PrismModelIDField, &modelID)
-	_ = pm.ExtraField(hyper.PrismModelNameField, &modelName)
-	return modelID, modelName
-}
-
 // modelDisplayName resolves the display name of a model from the
 // current config, falling back to the model ID when no entry exists or
-// the entry has no name. The result is persisted on assistant messages
-// so the UI keeps showing a meaningful name after the model is renamed
-// or removed from the config.
+// the entry has no name.
 func (a *sessionAgent) modelDisplayName(model config.SelectedModel) string {
 	if a.cfg != nil {
 		if cfg := a.cfg.Config(); cfg != nil {
@@ -2120,66 +1984,6 @@ func (a *sessionAgent) modelDisplayName(model config.SelectedModel) string {
 		}
 	}
 	return model.Model
-}
-
-func (a *sessionAgent) modelForStepCost(model Model, metadata fantasy.ProviderMetadata) Model {
-	if model.ModelCfg.Provider != hyper.Name || a.cfg == nil {
-		return model
-	}
-	routedModelID, _ := extractPrismModel(metadata)
-	if routedModelID == "" {
-		return model
-	}
-	cfg := a.cfg.Config()
-	if cfg == nil {
-		return model
-	}
-	routedModel := cfg.GetModel(hyper.Name, routedModelID)
-	if routedModel == nil {
-		return model
-	}
-	model.CatwalkCfg = *routedModel
-	return model
-}
-
-func (a *sessionAgent) hyperStepsCost(model Model, steps []fantasy.StepResult) *float64 {
-	if model.ModelCfg.Provider != hyper.Name || len(steps) == 0 {
-		return nil
-	}
-	var cost float64
-	for _, step := range steps {
-		pricingModel := a.modelForStepCost(model, step.ProviderMetadata)
-		cost += usageCost(pricingModel.CatwalkCfg.Pricing, step.Usage)
-	}
-	return &cost
-}
-
-// extractPrismSavings returns the hypercredit and dollar savings from
-// routing the turn through the Hyper Prism model router, as reported by
-// its savings trailers, or nil when not reported or malformed.
-func extractPrismSavings(metadata fantasy.ProviderMetadata) (hypercredits, dollars *float64) {
-	openaiMeta, ok := metadata[openai.Name]
-	if !ok {
-		return nil, nil
-	}
-	pm, ok := openaiMeta.(*openai.ProviderMetadata)
-	if !ok {
-		return nil, nil
-	}
-	return extraFieldFloat(pm, hyper.PrismHypercreditSavingsField), extraFieldFloat(pm, hyper.PrismDollarSavingsField)
-}
-
-func extraFieldFloat(pm *openai.ProviderMetadata, key string) *float64 {
-	var value string
-	if !pm.ExtraField(key, &value) {
-		return nil
-	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		slog.Warn("Could not parse Prism savings", "key", key, "value", value, "error", err)
-		return nil
-	}
-	return &parsed
 }
 
 func usageCost(pricing catwalk.Pricing, usage fantasy.Usage) float64 {
@@ -2613,12 +2417,4 @@ func sanitizeToolInput(toolName, toolCallID, input string) (string, bool) {
 		return "{}", true
 	}
 	return input, false
-}
-
-// signInAgainMessage tells the user how to replace a credential the provider
-// refused after a refresh.
-func signInAgainMessage(m Model) string {
-	name := cmp.Or(m.ProviderName, m.ModelCfg.Provider)
-	return fmt.Sprintf("Please sign in to %s again. You can also run \"crush login %s --force\".",
-		name, m.ModelCfg.Provider)
 }

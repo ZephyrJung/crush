@@ -20,11 +20,10 @@ import (
 )
 
 const (
-	CheckIcon       string = "✓"
-	SpinnerIcon     string = "⋯"
-	LoadingIcon     string = "⟳"
-	ModelIcon       string = "◇"
-	HypercreditIcon string = "◆"
+	CheckIcon   string = "✓"
+	SpinnerIcon string = "⋯"
+	LoadingIcon string = "⟳"
+	ModelIcon   string = "◇"
 
 	// GitBranchIcon is the Powerline branch glyph, shown only with Nerd Fonts.
 	GitBranchIcon string = "\ue0a0"
@@ -104,7 +103,6 @@ type Styles struct {
 		Charm             lipgloss.Style // Style for "Charm™" label
 		Diagonals         lipgloss.Style // Style for diagonal separators (╱)
 		Percentage        lipgloss.Style // Style for context percentage
-		HypercreditIcon   lipgloss.Style // Style for Hypercredit count (◆ N)
 		Keystroke         lipgloss.Style // Style for keystroke hints (e.g., "ctrl+d")
 		KeystrokeTip      lipgloss.Style // Style for keystroke action text (e.g., "open", "close")
 		WorkingDir        lipgloss.Style // Style for current working directory
@@ -296,8 +294,6 @@ type Styles struct {
 		TokenPercentage      lipgloss.Style // "42%" percent of context window
 		EstimatedUsagePrefix lipgloss.Style // "~" prefix for estimated usage
 		Cost                 lipgloss.Style // "$0.42" cost readout
-		HypercreditIcon      lipgloss.Style // Hypercredit icon (◆)
-		HypercreditText      lipgloss.Style // Remaining Hypercredits text
 	}
 
 	// Resource styles the LSP/MCP/skills sidebar lists: their heading,
@@ -372,7 +368,6 @@ type Styles struct {
 		AssistantInfoModel     lipgloss.Style
 		AssistantInfoProvider  lipgloss.Style
 		AssistantInfoDuration  lipgloss.Style
-		SubduedHypercreditIcon lipgloss.Style // Subdued ◆ for hypercredit figures within subdued text
 		AssistantCanceled      lipgloss.Style // Italic "Canceled" footer
 	}
 
@@ -572,17 +567,6 @@ type Styles struct {
 			Hint    lipgloss.Style // Style for quit hint
 			Warning lipgloss.Style // Style for the work-in-progress warning
 			Frame   lipgloss.Style // Outer rounded border framing the quit dialog
-		}
-
-		APIKey struct {
-			Spinner lipgloss.Style // Loading spinner while validating the key
-		}
-
-		// AuthMethod styles the OAuth-vs-API-key choice dialog.
-		AuthMethod struct {
-			Prompt      lipgloss.Style // "How would you like to authenticate?" question line
-			CardBlurred lipgloss.Style // Unselected choice card frame and label
-			CardFocused lipgloss.Style // Selected choice card frame and label
 		}
 
 		OAuth struct {
