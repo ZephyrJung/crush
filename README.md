@@ -275,7 +275,10 @@ for a value:
 
 ### Themes
 
-Crush ships with built-in color themes.
+Crush ships with built-in color themes. When no theme is configured, the
+default follows the terminal's background: the dark Charmtone Panther at
+night, the light Charmtone Daylight for daytime. If your terminal switches
+between light and dark mode while Crush runs, the theme follows along.
 
 #### Switching Themes
 
@@ -319,10 +322,11 @@ dialog.
 
 #### Built-In Themes
 
-| Theme             | Name                          |
-| ----------------- | ----------------------------- |
-| Charmtone Pantera | `charmtone-panther` (default) |
-| Gruvbox Dark      | `gruvbox-dark`                |
+| Theme             | Name                                      |
+| ----------------- | ----------------------------------------- |
+| Charmtone Panther | `charmtone-panther` (default, dark mode)  |
+| Charmtone Daylight| `charmtone-daylight` (default, light mode)|
+| Gruvbox Dark      | `gruvbox-dark`                            |
 | Keanu             | `keanu`                       |
 | Rosé Pine         | `rose-pine`                   |
 | Rosé Pine Moon    | `rose-pine-moon`              |

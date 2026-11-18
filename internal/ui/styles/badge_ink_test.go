@@ -51,6 +51,25 @@ func badgesOf(s Styles, o quickStyleOpts) []badge {
 // role. Rosé Pine's mid-tone pine fills take the text color; dawn's light
 // gold fills take the deep text color instead.
 var badgeInkExceptions = map[string]map[string]string{
+	// The light Charmtone theme fills badges with mid-tone hues whose
+	// background-role inks (light surfaces) fall below the contrast floor,
+	// so badgeInk swaps them all to the dark text color.
+	"charmtone-daylight": {
+		"Status.SuccessIndicator":      "#3a3943",
+		"Status.InfoIndicator":         "#3a3943",
+		"Status.UpdateIndicator":       "#3a3943",
+		"Status.SuccessMessage":        "#3a3943",
+		"Status.InfoMessage":           "#3a3943",
+		"Status.UpdateMessage":         "#3a3943",
+		"Status.WarnIndicator":         "#3a3943",
+		"Status.ModeBadgeYolo":         "#3a3943",
+		"Editor.PromptYoloIconFocused": "#3a3943",
+		"Button.Hovered":               "#3a3943",
+		"Attachments.Image":            "#3a3943",
+		"Attachments.Text":             "#3a3943",
+		"Attachments.Skill":            "#3a3943",
+		"Tool.AgenticFetchPromptTag":   "#3a3943",
+	},
 	"rose-pine": {
 		"Status.SuccessIndicator":    "#e0def4",
 		"Status.InfoIndicator":       "#e0def4",

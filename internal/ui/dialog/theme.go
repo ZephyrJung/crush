@@ -454,11 +454,11 @@ func (th *Theme) previewAction() Action {
 }
 
 // currentThemeName returns the active theme name from config, defaulting
-// to the built-in default when unset.
+// to the built-in default for the terminal's day/night mode when unset.
 func (th *Theme) currentThemeName() string {
 	cfg := th.com.Config()
 	if cfg == nil || cfg.Options == nil || cfg.Options.TUI == nil || cfg.Options.TUI.ActiveTheme == "" {
-		return "charmtone-panther"
+		return styles.DefaultThemeName()
 	}
 	return cfg.Options.TUI.ActiveTheme
 }

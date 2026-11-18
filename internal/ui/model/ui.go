@@ -233,6 +233,12 @@ type UI struct {
 	// resolves to the same theme.
 	themeKey string
 
+	// terminalDark records the last known terminal background mode once
+	// the terminal reported it. The first report (or a change) swaps the
+	// default theme between its dark and light variants; nil means no
+	// report has arrived yet.
+	terminalDark *bool
+
 	// userThemeSelected records that the user explicitly chose a theme
 	// during this session. It guards against provider-driven theme swaps
 	// discarding that choice, even in client/server mode where the
@@ -679,6 +685,9 @@ func (m *UI) Init() tea.Cmd {
 	// The branch is shown from the first frame on, so read it now and keep
 	// polling for checkouts made outside Crush.
 	cmds = append(cmds, m.fetchGitBranch(), m.gitBranchTicker())
+	// Ask the terminal for its background color: the reply swaps the
+	// default theme between its dark (night) and light (day) variants.
+	cmds = append(cmds, tea.RequestBackgroundColor)
 	cmds = append(cmds, detectNerdFonts(m.com.Config().Options.TUI))
 	// Prime the memoized MCP state off-thread. There is deliberately no
 	// wait for server-side MCP initialization: the init gate is
@@ -870,6 +879,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sendProgressBar = slices.Contains(msg, "WT_SESSION")
 		}
 		cmds = append(cmds, common.QueryCmd(uv.Environ(msg)))
+	case tea.BackgroundColorMsg:
+		m.handleTerminalBackground(msg)
 	case tea.ModeReportMsg:
 		m.updateNotificationBackend()
 	case uv.UnknownOscEvent:
@@ -2444,7 +2455,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		activeTheme := common.ThemeNameFromConfig(m.com.Config())
 		isActive := strings.EqualFold(activeTheme, themeName)
 		if activeTheme == "" {
-			isActive = strings.EqualFold(themeName, "charmtone-panther")
+			isActive = strings.EqualFold(themeName, styles.DefaultThemeName())
 		}
 		if isActive {
 			newStyles, err := styles.LoadTheme(themeName)
@@ -2558,15 +2569,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		// If the deleted theme was active, reset to the default theme.
 		if strings.EqualFold(common.ThemeNameFromConfig(m.com.Config()), msg.Name) {
-			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.active_theme", "charmtone-panther"); err != nil {
+			// Clear the configured theme so selection follows the
+			// terminal's day/night mode again.
+			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.active_theme", ""); err != nil {
 				cmds = append(cmds, util.ReportError(err))
 				break
 			}
-			newStyles, err := styles.LoadTheme("charmtone-panther")
-			if err != nil {
-				cmds = append(cmds, util.ReportError(err))
-				break
-			}
+			newStyles := styles.ThemeForKey(m.themeKey)
 			m.applyTheme(newStyles)
 			m.preThemeStyles = nil
 			m.userAppliedTheme()
@@ -5026,6 +5035,27 @@ func (m *UI) renderEditorView(width int) string {
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
 func (m *UI) cacheSidebarLogo(width int) {
 	m.sidebarLogo = renderLogo(m.com.Styles, true, width)
+}
+
+// handleTerminalBackground adapts the default theme to the terminal's
+// background: dark (night) or light (day). An explicitly selected theme
+// always wins, as does an active host theme. The first report applies
+// the matching variant; later reports re-apply only on a change, so a
+// terminal switching between day and night mode at runtime follows
+// along.
+func (m *UI) handleTerminalBackground(msg tea.BackgroundColorMsg) {
+	if m.userThemeSelected || common.ThemeNameFromConfig(m.com.Config()) != "" || m.hostTheme.active {
+		return
+	}
+	dark := msg.IsDark()
+	styles.SetTerminalIsDark(dark)
+	if m.terminalDark != nil && *m.terminalDark == dark {
+		return
+	}
+	m.terminalDark = &dark
+	key := styles.ThemeKeyForProvider(config.OllamaProviderID)
+	m.themeKey = key
+	m.applyTheme(styles.ThemeForKey(key))
 }
 
 // applyThemeForProvider swaps the active theme to the one associated with

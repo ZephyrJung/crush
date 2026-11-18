@@ -10,34 +10,176 @@ import (
 	"charm.land/tone"
 )
 
+// Default theme keys used by [ThemeKeyForProvider] and [ThemeForKey].
+// The dark key maps to Charmtone Panther (night), the light key to
+// Charmtone Daylight (day).
+const (
+	ThemeKeyDefault      = "default"
+	ThemeKeyDefaultLight = "default-light"
+)
+
 // ThemeKeyForProvider returns a stable identifier for the theme
 // associated with the given provider ID. Providers that share a theme
 // yield the same key, so callers can cheaply detect when switching
 // providers would not actually change the active theme and skip the
-// expensive style rebuild. This is the single source of truth for the
-// provider-to-theme mapping; [ThemeForProvider] builds on it.
+// expensive style rebuild. The key also carries the terminal's
+// day/night mode: an unconfigured theme follows the terminal
+// background (see [TerminalIsDark]). This is the single source of
+// truth for the provider-to-theme mapping; [ThemeForProvider] builds
+// on it.
 func ThemeKeyForProvider(providerID string) string {
-	return "default"
+	if TerminalIsDark() {
+		return ThemeKeyDefault
+	}
+	return ThemeKeyDefaultLight
 }
 
 // ThemeForProvider returns the Styles associated with the given provider
-// ID. Unknown or empty provider IDs yield the default Charmtone Pantera
-// theme.
+// ID. Unknown or empty provider IDs yield the default theme, chosen by
+// the terminal's background.
 func ThemeForProvider(providerID string) Styles {
 	return ThemeForKey(ThemeKeyForProvider(providerID))
 }
 
 // ThemeForKey returns the Styles for a key returned by
-// [ThemeKeyForProvider]. Unknown keys yield the default Charmtone Pantera
-// theme.
+// [ThemeKeyForProvider]. Unknown keys yield the default theme for the
+// terminal's background.
 func ThemeForKey(key string) Styles {
+	if key == ThemeKeyDefaultLight {
+		return CharmtoneDaylight()
+	}
 	return CharmtonePantera()
 }
 
+// DefaultThemeName returns the name of the theme used when none is
+// configured: the dark Charmtone Panther for a dark terminal, the light
+// Charmtone Daylight for a light one.
+func DefaultThemeName() string {
+	if TerminalIsDark() {
+		return "charmtone-panther"
+	}
+	return "charmtone-daylight"
+}
+
 // CharmtonePantera returns the Charmtone dark theme. It's the default style
-// for the UI.
+// for the UI on a dark terminal.
 func CharmtonePantera() Styles {
 	return charmtoneOverrides(quickStyle(charmtoneOpts()))
+}
+
+// CharmtoneDaylight returns the Charmtone light theme, the default for
+// light (daytime) terminals. It keeps the Charmtone brand hues but
+// flips the surface roles: dark ink on light surfaces instead of the
+// reverse.
+func CharmtoneDaylight() Styles {
+	return charmtoneDaylightOverrides(quickStyle(charmtoneDaylightOpts()))
+}
+
+// charmtoneDaylightOpts returns the quickStyleOpts for the Charmtone
+// light theme, the daytime counterpart of the dark Panther palette.
+// Brand hues stay Charmtone; surfaces flip to light and text to dark
+// ink. The badge, warning and button tokens match the light palette
+// the badge-ink tests pin as legible.
+func charmtoneDaylightOpts() quickStyleOpts {
+	return quickStyleOpts{
+		primary:   lipgloss.Color("#6B50FF"), // Charple
+		secondary: lipgloss.Color("#9953FF"), // Plum
+		accent:    lipgloss.Color("#007AB8"), // Damson
+		keyword:   lipgloss.Color("#EB4268"), // Sriracha
+
+		fgBase:       lipgloss.Color("#3A3943"), // Charcoal
+		fgMoreSubtle: lipgloss.Color("#4D4C57"), // Iron
+		fgSubtle:     lipgloss.Color("#858392"), // Squid
+		fgMostSubtle: lipgloss.Color("#BFBCC8"), // Smoke
+
+		onPrimary: lipgloss.Color("#FFFAF1"), // Butter
+
+		bgBase:         lipgloss.Color("#F7F6FB"),
+		bgLeastVisible: lipgloss.Color("#ECEBF0"),
+		bgLessVisible:  lipgloss.Color("#D6D3DC"),
+		bgMostVisible:  lipgloss.Color("#BFBCC8"),
+
+		separator: lipgloss.Color("#D6D3DC"),
+
+		destructive:       lipgloss.Color("#AB2454"),
+		destructiveSubtle: lipgloss.Color("#FF7F90"), // Salmon
+		error:             lipgloss.Color("#AB2454"),
+		warningSubtle:     lipgloss.Color("#4D4C57"), // Iron
+		warning:           lipgloss.Color("#BF976F"), // Cumin
+		attention:         lipgloss.Color("#B4622B"),
+		busy:              lipgloss.Color("#BF976F"), // Cumin
+		info:              lipgloss.Color("#007AB8"), // Damson
+		infoMoreSubtle:    lipgloss.Color("#3E8FC0"),
+		infoMostSubtle:    lipgloss.Color("#9CC3DC"),
+		success:           lipgloss.Color("#00A475"),
+		successMoreSubtle: lipgloss.Color("#12C78F"), // Guac
+		successMostSubtle: lipgloss.Color("#00A475"),
+		yolo:              lipgloss.Color("#4D4C57"), // Iron
+		plan:              lipgloss.Color("#6B50FF"),
+		planMoreSubtle:    lipgloss.Color("#6B50FF"),
+
+		// Muted diff foreground hues; the backgrounds derive from these
+		// over bgBase.
+		diffInsertFg: lipgloss.Color("#1E7A46"),
+		diffDeleteFg: lipgloss.Color("#A34150"),
+
+		button:         lipgloss.Color("#6B50FF"),
+		buttonSubtle:   lipgloss.Color("#D6D3DC"),
+		buttonInactive: lipgloss.Color("#BFBCC8"),
+		buttonHovered:  lipgloss.Color("#A2A0AD"),
+
+		// ANSI 16-color palette for remapping raw terminal output
+		// (e.g. bang-mode shell commands) onto legible colors on a light
+		// background: bright hues darken instead of brighten.
+		ansiBlack:   lipgloss.Color("#3A3943"),
+		ansiRed:     lipgloss.Color("#AB2454"),
+		ansiGreen:   lipgloss.Color("#00A475"),
+		ansiYellow:  lipgloss.Color("#9C7428"),
+		ansiBlue:    lipgloss.Color("#007AB8"),
+		ansiMagenta: lipgloss.Color("#9C35E1"),
+		ansiCyan:    lipgloss.Color("#0E8FA0"),
+		ansiWhite:   lipgloss.Color("#BFBCC8"),
+
+		ansiBrightBlack:   lipgloss.Color("#858392"),
+		ansiBrightRed:     lipgloss.Color("#D4546C"),
+		ansiBrightGreen:   lipgloss.Color("#0E9464"),
+		ansiBrightYellow:  lipgloss.Color("#A67F1E"),
+		ansiBrightBlue:    lipgloss.Color("#3E8FC0"),
+		ansiBrightMagenta: lipgloss.Color("#8A52C9"),
+		ansiBrightCyan:    lipgloss.Color("#2E97A8"),
+		ansiBrightWhite:   lipgloss.Color("#3A3943"),
+	}
+}
+
+// charmtoneDaylightOverrides applies the light theme's tweaks on top of
+// the token-driven base styles. It inherits the Charmtone structure
+// overrides, then darkens the hardcoded syntax hues that only have
+// enough contrast on the dark palette.
+func charmtoneDaylightOverrides(s Styles) Styles {
+	s = charmtoneOverrides(s)
+
+	// The bang prompt writes Salt on Hazy for the dark theme; on the
+	// light theme Salt is invisible, so switch to dark ink.
+	s.Editor.PromptBangIconFocused = s.Editor.PromptBangIconFocused.
+		Foreground(tone.Pepper)
+
+	// Darken the syntax palette for the light background.
+	chroma := s.Markdown.CodeBlock.Chroma
+	if chroma != nil {
+		chroma.CommentPreproc.Color = hex(lipgloss.Color("#6E6A86"))
+		chroma.KeywordReserved.Color = hex(lipgloss.Color("#B03A8C"))
+		chroma.KeywordNamespace.Color = hex(lipgloss.Color("#B03A8C"))
+		chroma.KeywordType.Color = hex(lipgloss.Color("#4A44C9"))
+		chroma.Operator.Color = hex(lipgloss.Color("#B23A50"))
+		chroma.NameTag.Color = hex(lipgloss.Color("#7A3FB8"))
+		chroma.NameAttribute.Color = hex(lipgloss.Color("#5C48C4"))
+		chroma.NameClass.Color = hex(lipgloss.Color("#2A2932"))
+		chroma.LiteralString.Color = hex(lipgloss.Color("#8A6A2F"))
+	}
+	s.Markdown.Link.Color = hex(lipgloss.Color("#0E7F7C"))
+	s.Markdown.Image.Color = hex(lipgloss.Color("#C24A96"))
+
+	return s
 }
 
 // charmtoneOpts returns the quickStyleOpts for the Charmtone dark theme,
@@ -634,22 +776,24 @@ func rosePineDawnOverrides(s Styles) Styles {
 
 // builtinThemes maps theme names to their quickStyleOpts palette definitions.
 var builtinThemes = map[string]func() quickStyleOpts{
-	"charmtone-panther": charmtoneOpts,
-	"gruvbox-dark":      gruvboxDarkOpts,
-	"keanu":             keanuOpts,
-	"rose-pine":         rosePineOpts,
-	"rose-pine-moon":    rosePineMoonOpts,
-	"rose-pine-dawn":    rosePineDawnOpts,
+	"charmtone-daylight": charmtoneDaylightOpts,
+	"charmtone-panther":  charmtoneOpts,
+	"gruvbox-dark":       gruvboxDarkOpts,
+	"keanu":              keanuOpts,
+	"rose-pine":          rosePineOpts,
+	"rose-pine-moon":     rosePineMoonOpts,
+	"rose-pine-dawn":     rosePineDawnOpts,
 }
 
 // builtinThemeOverrides maps theme names to functions that apply
 // theme-specific style tweaks on top of the styles produced by
 // [quickStyle]. Themes without overrides are absent from the map.
 var builtinThemeOverrides = map[string]func(Styles) Styles{
-	"charmtone-panther": charmtoneOverrides,
-	"gruvbox-dark":      gruvboxDarkOverrides,
-	"keanu":             keanuOverrides,
-	"rose-pine-dawn":    rosePineDawnOverrides,
+	"charmtone-daylight": charmtoneDaylightOverrides,
+	"charmtone-panther":  charmtoneOverrides,
+	"gruvbox-dark":       gruvboxDarkOverrides,
+	"keanu":              keanuOverrides,
+	"rose-pine-dawn":     rosePineDawnOverrides,
 }
 
 // deprecatedThemeNames maps legacy built-in theme names to their current
@@ -686,7 +830,11 @@ func BuiltinThemeNames() []string {
 // over built-in themes of the same name. Empty names use tone.
 func LoadTheme(name string) (Styles, error) {
 	if name == "" {
-		return CharmtonePantera(), nil
+		// No theme configured: follow the terminal's day/night mode.
+		if TerminalIsDark() {
+			return CharmtonePantera(), nil
+		}
+		return CharmtoneDaylight(), nil
 	}
 	key := normalizeThemeName(name)
 

@@ -194,7 +194,7 @@ func (ed *ThemeEditor) loadTheme() {
 	cfg := ed.com.Config()
 	if cfg == nil || cfg.Options == nil || cfg.Options.TUI == nil {
 		if ed.name == "" {
-			ed.name = "charmtone-panther"
+			ed.name = styles.DefaultThemeName()
 		}
 		ed.loadBuiltin(ed.name)
 		return
@@ -204,7 +204,7 @@ func (ed *ThemeEditor) loadTheme() {
 		ed.name = cfg.Options.TUI.ActiveTheme
 	}
 	if ed.name == "" {
-		ed.name = "charmtone-panther"
+		ed.name = styles.DefaultThemeName()
 	}
 
 	// Check for a user theme file first.
